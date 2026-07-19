@@ -1969,13 +1969,33 @@
       const btn = document.createElement("button");
       btn.className = it.key === state.view ? "active" : "";
       btn.innerHTML = `<span class="bicon">${it.icon}</span><span>${it.label}</span>`;
-      btn.addEventListener("click", () => { state.view = it.key; render(); window.scrollTo(0, 0); });
+      btn.addEventListener("click", () => {
+        const wasDay = state.view === "day";
+        state.view = it.key;
+        render();
+        if (it.key === "day" && !wasDay) window.scrollTo(0, dayViewScrollY);
+        else if (it.key !== "day") window.scrollTo(0, 0);
+        // else: redundant click on the already-active Day tab -- leave
+        // scroll exactly where it is rather than yanking to a stale value.
+      });
       nav.appendChild(btn);
     });
     return nav;
   }
 
+  // Scroll position within the Day view, captured whenever navigating away
+  // from it (to Map or elsewhere) so returning to the *same* day restores
+  // where you were instead of snapping back to the top. Tracked here
+  // rather than in each individual nav click handler since there are
+  // multiple ways to leave Day view (bottom nav, a leg's "Map view"
+  // button) and this way none of them can forget to capture it.
+  let dayViewScrollY = 0;
+  let lastRenderedView = null;
+
   function render() {
+    if (lastRenderedView === "day" && state.view !== "day") {
+      dayViewScrollY = window.scrollY;
+    }
     teardownTripMap();
     root.innerHTML = "";
     root.appendChild(renderHeader());
@@ -1986,6 +2006,7 @@
     else view = renderChecklistView();
     root.appendChild(view);
     root.appendChild(renderBottomNav());
+    lastRenderedView = state.view;
   }
 
   render();

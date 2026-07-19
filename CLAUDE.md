@@ -157,6 +157,17 @@ Defined as CSS custom properties in `styles.css` (`:root`):
   scrolls the matching `.leg[data-leg-num]` into view and flashes it
   (`.leg-highlight` in `styles.css`). Prev/next-day and jump-sheet
   navigation don't pass a `legNum` and keep the old top-of-day behavior.
+- The Day view's scroll position is preserved across navigating away (to
+  Map or elsewhere) and back via the bottom nav, in-memory only, via
+  `dayViewScrollY`/`lastRenderedView` in `app.js` -- captured generically
+  inside `render()` itself (whenever the view *was* "day" and is changing
+  to something else) rather than in each individual nav click handler,
+  since there's more than one way to leave Day view (bottom nav, a leg's
+  "Map view" button) and this way none of them can forget to capture it.
+  Only restored when actually *returning* to Day from elsewhere -- a
+  redundant click on the already-active Day tab, or jumping to a specific
+  day/leg (prev/next, jump sheet, search, a map popup's "Go to Day"), both
+  intentionally keep their existing behavior instead.
 
 ## Local development
 
