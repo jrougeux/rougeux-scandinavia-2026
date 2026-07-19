@@ -782,7 +782,16 @@ input:focus-visible {
   box-shadow: 0 1px 4px rgba(38,36,32,0.45);
 }
 
-.trip-map-popup { font-family: var(--font-body); min-width: 160px; }
+.trip-map-popup {
+  font-family: var(--font-body);
+  min-width: 160px;
+  max-height: 260px;
+  overflow-y: auto;
+  /* Leaflet's close button is a 24px square pinned to the wrapper's own
+     top-right corner; this content sits inside a 12px-margin wrapper, so
+     without extra clearance here title text can run right under the "x". */
+  padding-right: 18px;
+}
 .trip-map-popup .tmp-eyebrow {
   font-family: var(--font-mono);
   font-size: 10.5px;
@@ -847,7 +856,6 @@ input:focus-visible {
   color: var(--accent);
   margin-top: 1px;
 }
-.trip-map-popup { max-height: 260px; overflow-y: auto; }
 
 /* Restyle Leaflet's chrome to match the app's design system instead of
    its default white/blue look. */

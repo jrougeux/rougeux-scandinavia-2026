@@ -135,6 +135,15 @@ Defined as CSS custom properties in `styles.css` (`:root`):
 - Dining map pins show the actual venue name (e.g. "Den Gyldene Freden"),
   not the leg's often-generic activity text ("Dinner"/"Lunch") --
   `MAP_DINING_LABEL` (leg.num -> name) in `app.js`.
+- Every `dining[]` entry with an address gets a pin and a "Map view" link
+  in Dining options, not just the "leading" pick that's actually tied to a
+  Logistics leg -- secondary/alternative candidates (e.g. "Restaurant
+  Tradition" as an alternative to "Den Gyldene Freden") are geocoded
+  directly in `MAP_DINING_EXTRA_COORDS` (keyed by address text, since they
+  have no leg.num of their own) and shown as "dining-suggested" pins.
+  `buildTripMapPoints()` returns `diningPinByAddress` (address ->
+  key/lat/lon) covering both leg-tied and address-only dining pins, which
+  `renderDiningItem()` uses directly for its "Map view" button.
 - Every leg/dining-item with a resolvable location gets a "🗺️ Map view"
   link/button (separate from the "📍 View on Google Maps" external link)
   that jumps into the Map tab centered on that exact pin with its popup

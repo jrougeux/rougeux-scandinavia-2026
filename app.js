@@ -541,18 +541,22 @@
   "155": "Bryggen 11, 5003 Bergen"
 };
 
-  // Dining options section entries don't carry a leg.num of their own --
-  // find it by matching address text against MAP_DINING (built from the
-  // same dining[].address in the first place, so this is an exact match
-  // wherever the corresponding Logistics leg was resolved from a real
-  // dining[] entry).
-  function legNumForDiningAddress(address) {
-    if (!address) return null;
-    for (const num in MAP_DINING) {
-      if (MAP_DINING[num] === address) return Number(num);
-    }
-    return null;
-  }
+  // Geocoded coordinates for dining[] entries that have a real address but
+  // aren't the "leading" pick tied to an actual Logistics leg (secondary/
+  // alternative candidates, e.g. "Restaurant Tradition" as an alternative
+  // to "Den Gyldene Freden"). Without this they'd have a "View on Google
+  // Maps" link (driven purely by d.address) but no map pin and no "Map
+  // view" link, since those normally come from the leg they're tied to --
+  // and these have no leg at all.
+  const MAP_DINING_EXTRA_COORDS = {
+    "Österlånggatan 7, 111 31 Stockholm": [59.32566, 18.073952],
+    "Österlånggatan 1, 111 31 Stockholm": [59.325917, 18.073727],
+    "Stortorget 3, 111 29 Stockholm": [59.325006, 18.071325],
+    "Nytorgsgatan 30, 116 40 Stockholm (Södermalm)": [59.314693, 18.081451],
+    "Kindstugatan 1, 111 31 Stockholm (Brända Tomten square)": [59.324766, 18.07268],
+    "Järnvägsgatan 8, 652 25 Karlstad": [59.379515, 13.499621],
+    "Vangsgata 52, 5700 Voss": [60.629331, 6.423424]
+  };
 
   // Dining legs whose venue is actually booked/scheduled (a paid tour, an
   // explicit "confirmed" note, or dining[].status === "scheduled") rather
@@ -1252,8 +1256,7 @@
     const mapLink = d.address
       ? `<a href="${googleMapsSearchUrl(d.address)}" target="_blank" rel="noopener">📍 View on Google Maps</a>`
       : "";
-    const legNum = legNumForDiningAddress(d.address);
-    const pinRef = legNum != null ? TRIP_MAP_POINTS.legPinIndex[legNum] : null;
+    const pinRef = d.address ? TRIP_MAP_POINTS.diningPinByAddress[d.address] : null;
     const mapViewHtml = pinRef ? `<button type="button" class="dining-map-view-btn">🗺️ Map view</button>` : "";
     const contactBits = [phoneLink, websiteLink, mapLink, mapViewHtml].filter(Boolean).join(" · ");
     el.innerHTML = `
@@ -1586,8 +1589,12 @@
 
     // leg.num -> { key, lat, lon } for every leg that has *some* pin
     // representing it on the trip map, regardless of category. Powers the
-    // "Map view" link in the Logistics list and Dining options.
+    // "Map view" link in the Logistics list.
     const legPinIndex = {};
+    // dining[].address -> { key, lat, lon }, covering both leg-tied dining
+    // pins and the address-only "extra" ones below. Powers the "Map view"
+    // link in Dining options, since those entries don't carry a leg.num.
+    const diningPinByAddress = {};
 
     const detailPoints = [];
     DAYS.forEach((day, dayIndex) => {
@@ -1618,6 +1625,33 @@
         };
         detailPoints.push(point);
         legPinIndex[leg.num] = { key: point.key, lat: point.lat, lon: point.lon };
+        if (cat === "dining" && MAP_DINING[leg.num]) {
+          diningPinByAddress[MAP_DINING[leg.num]] = { key: point.key, lat: point.lat, lon: point.lon };
+        }
+      });
+    });
+
+    // Dining candidates that have a real address but aren't the leading
+    // pick tied to a Logistics leg (secondary/alternative restaurants) --
+    // give them a pin too, so every dining option is visible on the map,
+    // not just the one actually walked to in the itinerary.
+    DAYS.forEach((day, dayIndex) => {
+      (day.dining || []).forEach((d) => {
+        if (!d.address || diningPinByAddress[d.address]) return;
+        const coords = MAP_DINING_EXTRA_COORDS[d.address];
+        if (!coords) return;
+        const point = {
+          lat: coords[0],
+          lon: coords[1],
+          kind: "dining-suggested",
+          dayIndex,
+          dayNumber: day.day_number,
+          label: d.name,
+          time: "",
+          key: "dining-extra:" + day.day_number + ":" + d.name
+        };
+        detailPoints.push(point);
+        diningPinByAddress[d.address] = { key: point.key, lat: point.lat, lon: point.lon };
       });
     });
 
@@ -1712,7 +1746,7 @@
       }
     });
 
-    return { cityPoints, detailPoints, hubPoints, legPinIndex };
+    return { cityPoints, detailPoints, hubPoints, legPinIndex, diningPinByAddress };
   }
 
   // Computed once -- the underlying trip data never changes at runtime, so
