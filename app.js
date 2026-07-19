@@ -502,6 +502,36 @@
   "164": "Frankfurt Airport (FRA), Germany"
 };
 
+  // Search-query text for "dining" legs (e.g. plain "Dinner"/"Lunch" in the
+  // Logistics list). Reuses the exact same address text as the matching
+  // day.dining[] entry so the Logistics link and the Dining options link
+  // for the same venue point at the same place. Legs with no chosen venue
+  // yet (address is still TBD/null in dining[], or the leg is a vague
+  // "free time" placeholder) intentionally get no link.
+  const MAP_DINING = {
+  "12": "Österlånggatan 51, 111 31 Stockholm",
+  "16": "Stortorget 18, 111 29 Stockholm",
+  "22": "Meets at Beirut Café / Östermalms Saluhall entrance, Nybrogatan 29/31, 114 39 Stockholm",
+  "23": "Meets at Beirut Café / Östermalms Saluhall entrance, Nybrogatan 29/31, 114 39 Stockholm",
+  "25": "Västerlånggatan 68B, 111 29 Stockholm",
+  "31": "Skansen, Stockholm, Sweden",
+  "33": "Restaurang Agaton, Stockholm, Sweden",
+  "42": "The Hairy Pig, Stockholm, Sweden",
+  "51": "Kyrkogatan 10, 792 30 Mora",
+  "56": "Moragatan 9, 792 30 Mora",
+  "65": "Vasagatan 32, 792 32 Mora",
+  "75": "Östanvindsgatan 1, 652 21 Karlstad",
+  "83": "Grønland 28, 0188 Oslo",
+  "89": "Torggata 16, 0181 Oslo",
+  "99": "Stranden 3, 0250 Oslo",
+  "108": "Grünerløkka, Oslo, Norway",
+  "109": "Thorvald Meyers gate 49, 0555 Oslo",
+  "131": "Hestavangen 3, 5700 Voss",
+  "138": "Strandgaten 3, 5013 Bergen",
+  "150": "Fisketorget, Bergen, Norway",
+  "155": "Bryggen 11, 5003 Bergen"
+};
+
   // Walking legs: explicit origin/destination search text for Google Maps
   // walking directions. Either side left unset auto-resolves: an "A -> B"
   // half naming a known lodging by name uses its exact coordinates; a leg
@@ -670,6 +700,12 @@
 
     if (cat === "activity") {
       const query = MAP_SEARCH_QUERY[leg.num];
+      if (!query) return null;
+      return { type: "search", url: googleMapsSearchUrl(query) };
+    }
+
+    if (cat === "dining") {
+      const query = MAP_DINING[leg.num];
       if (!query) return null;
       return { type: "search", url: googleMapsSearchUrl(query) };
     }
