@@ -171,12 +171,17 @@ Defined as CSS custom properties in `styles.css` (`:root`):
   `MAP_WALK_HUBS` are covered; the rest would need the same text-matching
   generalization `mapLinkForLeg()` does for its Google Maps links.
 - Clicking a leg/day inside a map popup (the pin's own "Go to Day" button,
-  or a visit row in an "Also passes through here" list) jumps to that
-  *specific* leg within the day view, not just the top of the day --
-  `goToDay(dayIndex, legNum)` takes an optional second argument that
-  scrolls the matching `.leg[data-leg-num]` into view and flashes it
-  (`.leg-highlight` in `styles.css`). Prev/next-day and jump-sheet
-  navigation don't pass a `legNum` and keep the old top-of-day behavior.
+  or a visit row in an "Also passes through here" list), or clicking a
+  Search result, jumps to that *specific* leg or dining item within the
+  day view, not just the top of the day -- `goToDay(dayIndex, legNum,
+  diningIndex)` takes optional 2nd/3rd arguments (at most one set per
+  call) that scroll the matching `.leg[data-leg-num]` or
+  `.dining-item[data-dining-index]` into view and flash it
+  (`scrollToAndHighlight()` / `.leg-highlight` in `styles.css` -- applies
+  to both element types). A dining match force-opens the "Dining options"
+  `<details>` first if it was collapsed, since scrollIntoView can't reach
+  into hidden content. Prev/next-day and jump-sheet navigation don't pass
+  either and keep the old top-of-day behavior.
 - The Day view's scroll position is preserved across navigating away (to
   Map or elsewhere) and back via the bottom nav, in-memory only, via
   `dayViewScrollY`/`lastRenderedView` in `app.js` -- captured generically

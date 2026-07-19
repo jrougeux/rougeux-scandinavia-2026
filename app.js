@@ -52,7 +52,18 @@
     return lodging ? lodging.location : "Travel Day";
   }
 
-  function goToDay(i, legNum) {
+  function scrollToAndHighlight(el) {
+    // If this element lives inside a collapsed <details> (e.g. "Dining
+    // options"), open it first -- scrollIntoView can't reach into hidden
+    // content, and there'd be nothing visible to highlight anyway.
+    const details = el.closest("details.collapsible");
+    if (details && !details.open) details.open = true;
+    el.scrollIntoView({ behavior: "smooth", block: "center" });
+    el.classList.add("leg-highlight");
+    setTimeout(() => el.classList.remove("leg-highlight"), 2200);
+  }
+
+  function goToDay(i, legNum, diningIndex) {
     state.dayIndex = i;
     state.view = "day";
     saveLastDay(i);
@@ -60,9 +71,14 @@
     if (legNum != null) {
       const el = document.querySelector('.leg[data-leg-num="' + legNum + '"]');
       if (el) {
-        el.scrollIntoView({ behavior: "smooth", block: "center" });
-        el.classList.add("leg-highlight");
-        setTimeout(() => el.classList.remove("leg-highlight"), 2200);
+        scrollToAndHighlight(el);
+        return;
+      }
+    }
+    if (diningIndex != null) {
+      const el = document.querySelector('.dining-item[data-dining-index="' + diningIndex + '"]');
+      if (el) {
+        scrollToAndHighlight(el);
         return;
       }
     }
@@ -1266,9 +1282,10 @@
     return "tel:" + phone.replace(/[^\d+]/g, "");
   }
 
-  function renderDiningItem(d) {
+  function renderDiningItem(d, diningIndex) {
     const el = document.createElement("div");
     el.className = "dining-item" + (d.leading ? " leading" : "");
+    el.setAttribute("data-dining-index", diningIndex);
     const phoneLink = d.phone ? `<a href="${telHref(d.phone)}">${d.phone}</a>` : "";
     const websiteHref = d.website ? (d.website.startsWith("http") ? d.website : "https://" + d.website) : "";
     const websiteLink = d.website ? `<a href="${websiteHref}" target="_blank" rel="noopener">${d.website}</a>` : "";
@@ -1396,7 +1413,7 @@
 
     if (day.dining && day.dining.length) {
       const diningContent = document.createElement("div");
-      day.dining.forEach((d) => diningContent.appendChild(renderDiningItem(d)));
+      day.dining.forEach((d, diningIndex) => diningContent.appendChild(renderDiningItem(d, diningIndex)));
       container.appendChild(renderCollapsible("Dining options", diningContent, false));
     }
 
@@ -1433,16 +1450,18 @@
           dayLabel: `Day ${day.day_number} · ${fmtDateLabel(day)}`,
           title: leg.activity,
           detail: [leg.mode, leg.detail].filter(Boolean).join(" — "),
-          haystack: [leg.activity, leg.detail, leg.mode].filter(Boolean).join(" ").toLowerCase()
+          haystack: [leg.activity, leg.detail, leg.mode].filter(Boolean).join(" ").toLowerCase(),
+          legNum: leg.num
         });
       });
-      (day.dining || []).forEach((d) => {
+      (day.dining || []).forEach((d, diningIndex) => {
         idx.push({
           dayIndex: DAYS.indexOf(day),
           dayLabel: `Day ${day.day_number} · ${fmtDateLabel(day)}`,
           title: d.name + (d.leading ? " ★" : ""),
           detail: [d.meal, d.address, d.description].filter(Boolean).join(" — "),
-          haystack: [d.name, d.meal, d.address, d.description].filter(Boolean).join(" ").toLowerCase()
+          haystack: [d.name, d.meal, d.address, d.description].filter(Boolean).join(" ").toLowerCase(),
+          diningIndex
         });
       });
     });
@@ -1488,13 +1507,7 @@
           <div class="match-title">${m.title}</div>
           <div class="match-detail">${m.detail}</div>
         `;
-        card.addEventListener("click", () => {
-          state.dayIndex = m.dayIndex;
-          state.view = "day";
-          saveLastDay(m.dayIndex);
-          render();
-          window.scrollTo(0, 0);
-        });
+        card.addEventListener("click", () => goToDay(m.dayIndex, m.legNum, m.diningIndex));
         results.appendChild(card);
       });
     }

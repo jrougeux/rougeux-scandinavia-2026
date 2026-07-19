@@ -427,9 +427,13 @@ input:focus-visible {
 .leg:last-child { border-bottom: none; }
 .leg:nth-child(even) { background: var(--surface-2); }
 
-/* Briefly flashes when a "Map view" popup or "Go to Day" link jumps here,
-   so the destination leg is unmistakable rather than just scrolled-to. */
-.leg.leg-highlight {
+/* Briefly flashes when a "Map view" popup, search result, or "Go to Day"
+   link jumps here, so the destination is unmistakable rather than just
+   scrolled-to. Also applied to .dining-item (search results can land on a
+   dining option, not just a leg) -- see .dining-item's own transition
+   below for its fade-out. */
+.leg.leg-highlight,
+.dining-item.leg-highlight {
   background: var(--cat-note-bg);
   transition: background 0.15s ease-out;
 }
@@ -628,6 +632,7 @@ input:focus-visible {
 .dining-item {
   padding: 10px 0;
   border-top: 1px solid var(--line);
+  transition: background 1.2s ease-out;
 }
 .dining-item:first-child { border-top: none; padding-top: 0; }
 .dining-item .row {
