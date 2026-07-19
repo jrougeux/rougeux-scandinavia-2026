@@ -15,7 +15,12 @@ Pages, Vercel, etc.).
 - `app.js` — all rendering/routing logic, vanilla JS, no framework
 - `styles.css` — design system (CSS custom properties at the top of the file)
 - `manifest.json` + `sw.js` — PWA manifest and service worker for offline/
-  "Add to Home Screen" support
+  "Add to Home Screen" support. `sw.js` caches assets cache-first under
+  `CACHE_NAME`. **Bump `CACHE_NAME` (e.g. v7 → v8) any time app.js/styles.css/
+  data.js/index.html change** — otherwise the browser won't detect `sw.js`
+  as changed, won't install a new service worker, and silently keeps
+  serving the old cached files even after a normal reload (a hard
+  refresh / cache clear is needed to recover without a version bump)
 - `icons/` — app icons (192px, 512px)
 - `assets/fonts/` — self-hosted DM Sans woff2 files (normal + italic, latin +
   latin-ext), loaded via `@font-face` in `styles.css` so the app works fully

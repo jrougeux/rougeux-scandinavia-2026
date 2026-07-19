@@ -749,7 +749,12 @@
     const phoneLink = d.phone ? `<a href="${telHref(d.phone)}">${d.phone}</a>` : "";
     const websiteHref = d.website ? (d.website.startsWith("http") ? d.website : "https://" + d.website) : "";
     const websiteLink = d.website ? `<a href="${websiteHref}" target="_blank" rel="noopener">${d.website}</a>` : "";
-    const contactBits = [phoneLink, websiteLink].filter(Boolean).join(" · ");
+    // Only real candidates carry an address; placeholders like "Dinner —
+    // not yet chosen" have none, so they get no map link.
+    const mapLink = d.address
+      ? `<a href="${googleMapsSearchUrl(d.address)}" target="_blank" rel="noopener">📍 View on map</a>`
+      : "";
+    const contactBits = [phoneLink, websiteLink, mapLink].filter(Boolean).join(" · ");
     el.innerHTML = `
       <div class="row">
         <span class="name">${d.name}</span>
