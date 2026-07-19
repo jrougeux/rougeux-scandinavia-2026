@@ -481,6 +481,16 @@ input:focus-visible {
 }
 .leg .flag-icon { color: var(--amber); margin-right: 4px; }
 
+.leg .leg-map-link {
+  display: inline-block;
+  margin-top: 6px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--accent);
+  text-decoration: none;
+}
+.leg .leg-map-link:active { opacity: 0.6; }
+
 /* ---------- Collapsible sections ---------- */
 .collapsible {
   border: 1px solid var(--line);
@@ -526,6 +536,76 @@ input:focus-visible {
   color: var(--text-dim);
   margin: 0;
 }
+
+.map-card { display: flex; flex-direction: column; gap: 8px; }
+
+.map-canvas-wrap {
+  position: relative;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--surface-2);
+  line-height: 0;
+  touch-action: pan-y;
+}
+.map-canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 2 / 1;
+  touch-action: pan-y;
+}
+
+.map-zoom-controls {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  display: flex;
+  flex-direction: column;
+  border-radius: 6px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  box-shadow: 0 1px 4px rgba(38,36,32,0.18);
+}
+.map-zoom-btn {
+  width: 32px;
+  height: 32px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 17px;
+  line-height: 1;
+  font-family: var(--font-mono);
+  touch-action: manipulation;
+}
+.map-zoom-btn:first-child { border-bottom: 1px solid var(--line); }
+.map-zoom-btn:active { background: var(--surface-2); }
+.map-zoom-btn:disabled { opacity: 0.35; }
+
+.map-attribution {
+  font-size: 10.5px;
+  color: var(--text-faint);
+}
+.map-attribution a { color: var(--text-faint); text-decoration: underline; text-underline-offset: 2px; }
+
+.map-footer { display: flex; }
+.map-gmaps-link {
+  flex: 1;
+  text-align: center;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 10px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--accent);
+  touch-action: manipulation;
+}
+.map-gmaps-link:active { background: var(--surface-2); }
 
 .dining-item {
   padding: 10px 0;

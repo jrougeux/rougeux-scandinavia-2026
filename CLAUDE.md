@@ -26,7 +26,9 @@ Pages, Vercel, etc.).
 `window.TRIP_DATA` top-level keys:
 - `meta` — trip name, dates, traveler info
 - `flights` — outbound/return flight legs
-- `lodging` — array of stays with host/confirmation/check-in-out info
+- `lodging` — array of stays with host/confirmation/check-in-out info, plus
+  `lat`/`lon` (decimal degrees, geocoded from each stay's address) used to
+  render the per-day map
 - `days[]` — 16 entries, each with:
   - `legs[]` — logistics legs, each with `num` (continuous 1–166), `activity`,
     `mode`, `depart`, `arrive`, `detail`, `flag` (bool — still open/unconfirmed)
@@ -56,6 +58,13 @@ Defined as CSS custom properties in `styles.css` (`:root`):
   dining, activity, note) via a left border stripe + tinted chip + emoji;
   see `categorizeLeg()` in `app.js` — every leg gets exactly one category,
   with "activity" as the fallback bucket
+- Each day view has an expandable "Map" section (above "Background & story")
+  showing that day's lodging location: a static map rendered on `<canvas>`
+  from OpenStreetMap tiles (`tile.openstreetmap.org`, no API key/dependency),
+  with +/- buttons that re-render at a different zoom level, plus a link that
+  opens the location in Google Maps. See `renderMapSection()` in `app.js`.
+  Tiles are only fetched the first time a day's Map section is opened (lazy,
+  via `renderCollapsible()`'s `onFirstOpen` hook), not on every render.
 
 ## Local development
 
@@ -93,6 +102,6 @@ fs.writeFileSync('data.js', 'window.TRIP_DATA = ' + JSON.stringify(data) + ';\n'
 
 - Wire up a "current leg" auto-highlight based on device time/date during the
   actual trip window (Jul 22 – Aug 6, 2026)
-- Add lat/long to lodging and legs for an optional map view
+- Add lat/long to individual legs (not just lodging) for finer-grained map pins
 - Export/print view for a specific day
 - Sync checklist state across devices (currently per-device localStorage only)
