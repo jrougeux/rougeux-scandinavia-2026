@@ -1,4 +1,4 @@
-const CACHE_NAME = "rougeux-trip-v9";
+const CACHE_NAME = "rougeux-trip-v19";
 const ASSETS = [
   "./",
   "./index.html",
@@ -11,7 +11,14 @@ const ASSETS = [
   "./assets/fonts/dm-sans-normal-latin.woff2",
   "./assets/fonts/dm-sans-normal-latin-ext.woff2",
   "./assets/fonts/dm-sans-italic-latin.woff2",
-  "./assets/fonts/dm-sans-italic-latin-ext.woff2"
+  "./assets/fonts/dm-sans-italic-latin-ext.woff2",
+  "./assets/leaflet/leaflet.js",
+  "./assets/leaflet/leaflet.css",
+  "./assets/leaflet/images/layers.png",
+  "./assets/leaflet/images/layers-2x.png",
+  "./assets/leaflet/images/marker-icon.png",
+  "./assets/leaflet/images/marker-icon-2x.png",
+  "./assets/leaflet/images/marker-shadow.png"
 ];
 
 self.addEventListener("install", (event) => {

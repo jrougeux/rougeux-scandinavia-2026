@@ -4,7 +4,7 @@
   const LODGING = DATA.lodging;
 
   const state = {
-    view: "day",       // "day" | "search" | "checklist"
+    view: "day",       // "day" | "map" | "search" | "checklist"
     dayIndex: 0,
     checks: loadChecks()
   };
@@ -52,11 +52,20 @@
     return lodging ? lodging.location : "Travel Day";
   }
 
-  function goToDay(i) {
+  function goToDay(i, legNum) {
     state.dayIndex = i;
     state.view = "day";
     saveLastDay(i);
     render();
+    if (legNum != null) {
+      const el = document.querySelector('.leg[data-leg-num="' + legNum + '"]');
+      if (el) {
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
+        el.classList.add("leg-highlight");
+        setTimeout(() => el.classList.remove("leg-highlight"), 2200);
+        return;
+      }
+    }
     window.scrollTo(0, 0);
   }
 
@@ -532,6 +541,449 @@
   "155": "Bryggen 11, 5003 Bergen"
 };
 
+  // Dining options section entries don't carry a leg.num of their own --
+  // find it by matching address text against MAP_DINING (built from the
+  // same dining[].address in the first place, so this is an exact match
+  // wherever the corresponding Logistics leg was resolved from a real
+  // dining[] entry).
+  function legNumForDiningAddress(address) {
+    if (!address) return null;
+    for (const num in MAP_DINING) {
+      if (MAP_DINING[num] === address) return Number(num);
+    }
+    return null;
+  }
+
+  // Dining legs whose venue is actually booked/scheduled (a paid tour, an
+  // explicit "confirmed" note, or dining[].status === "scheduled") rather
+  // than a candidate still under consideration ("suggested"/"tentative"/
+  // "along-the-route"). Drives red vs. pink on the trip map only -- see
+  // categoryMapColor()'s "dining-suggested" entry.
+  const MAP_DINING_CONFIRMED = new Set([22, 23, 83, 89, 109]);
+
+  // Display name for dining map pins -- leg.activity is often a generic
+  // meal label ("Dinner", "Lunch", "Fika stop"), not the actual venue.
+  // Legs not listed here already have a specific-enough activity label
+  // (e.g. leg 31 "Skansen") and use it as-is.
+  const MAP_DINING_LABEL = {
+    12: "Den Gyldene Freden",
+    16: "Café Chokladkoppen",
+    22: "The Nordic Food Walk",
+    23: "The Nordic Food Walk",
+    25: "Aifur",
+    33: "Restaurang Agaton",
+    42: "The Hairy Pig",
+    51: "Käk & Plock",
+    56: "Korsnäsgården",
+    65: "Restaurang Vasagatan 32",
+    75: "Julins Backyard Barbecue",
+    83: "Kafe Asylet",
+    89: "Oslo Street Food",
+    99: "Pastis Bistrobar",
+    109: "Godt Brød",
+    131: "Vangen Café",
+    138: "Søstrene Hagelin",
+    150: "Lunch near Fisketorget",
+    155: "Bryggeloftet & Stuene"
+  };
+
+  // Real lat/lon for the trip-wide map view (Task: bottom-nav "Map" tab).
+  // Geocoded from the exact same query text as MAP_SEARCH_QUERY / MAP_DINING
+  // above, so a pin's position always matches where its "view on map" link
+  // points. Keyed by leg.num, same as those tables.
+  const MAP_POINT_COORDS_ACTIVITY = {
+  "2": [39.860668, -104.685367],
+  "6": [50.024413, 8.5552],
+  "8": [59.646792, 17.937044],
+  "18": [59.325774, 18.070374],
+  "20": [59.326865, 18.070322],
+  "29": [59.328059, 18.091366],
+  "37": [59.33085, 18.077472],
+  "39": [59.287847, 18.917834],
+  "54": [61.03692, 14.528749],
+  "59": [60.962355, 14.651077],
+  "60": [60.962502, 14.64618],
+  "85": [59.918728, 10.770504],
+  "86": [59.919783, 10.771714],
+  "93": [59.913459, 10.743206],
+  "95": [59.912512, 10.747012],
+  "97": [59.911216, 10.732949],
+  "101": [59.907598, 10.737209],
+  "103": [59.917063, 10.727725],
+  "106": [59.908017, 10.751415],
+  "113": [59.924678, 10.707739],
+  "125": [60.862952, 7.113178],
+  "127": [60.879109, 6.83963],
+  "148": [60.394782, 5.342646],
+  "152": [60.394698, 5.324164],
+  "158": [60.370786, 6.10288],
+  "164": [50.024413, 8.5552]
+};
+
+  const MAP_POINT_COORDS_DINING = {
+  "12": [59.323127, 18.07374],
+  "16": [59.324958, 18.070342],
+  "22": [59.335909, 18.07769],
+  "23": [59.335909, 18.07769],
+  "25": [59.323078, 18.071967],
+  "31": [59.326623, 18.105282],
+  "33": [59.322947, 18.072253],
+  "42": [59.323784, 18.068824],
+  "51": [61.005818, 14.539194],
+  "56": [61.004892, 14.540932],
+  "65": [61.007435, 14.544742],
+  "75": [59.37986, 13.557358],
+  "83": [59.912875, 10.762432],
+  "89": [59.915849, 10.750834],
+  "99": [59.910171, 10.727808],
+  "108": [59.925471, 10.777421],
+  "109": [59.92401, 10.758884],
+  "131": [60.628664, 6.421177],
+  "138": [60.393879, 5.324153],
+  "150": [60.394698, 5.324164],
+  "155": [60.396467, 5.324751]
+};
+
+  // Named hubs (stations, airports, ferry/bus stops) referenced by
+  // "transport" legs (train/bus/ferry/funicular/taxi/flight/drive). Many
+  // reuse coordinates already geocoded above for a lodging/activity/dining
+  // leg at the same real-world place; the rest are freshly geocoded here.
+  const HUB_COORDS = {
+  "Denver Airport": [
+    39.860668,
+    -104.685367
+  ],
+  "Frankfurt Airport": [
+    50.024413,
+    8.5552
+  ],
+  "Stockholm Arlanda Airport": [
+    59.646792,
+    17.937044
+  ],
+  "Munkbron 15 (Stockholm)": [
+    59.3242496,
+    18.0670955
+  ],
+  "Royal Palace (Stockholm)": [
+    59.326865,
+    18.070322
+  ],
+  "Östermalms Saluhall": [
+    59.335909,
+    18.07769
+  ],
+  "Gamla Stan": [
+    59.323305,
+    18.067002
+  ],
+  "Östermalm": [
+    59.338275,
+    18.071893
+  ],
+  "Vasa Museum": [
+    59.328059,
+    18.091366
+  ],
+  "Skansen": [
+    59.326623,
+    18.105282
+  ],
+  "Sandhamn": [
+    59.287847,
+    18.917834
+  ],
+  "Nybrokajen": [
+    59.33085,
+    18.077472
+  ],
+  "Stockholm Central Station": [
+    59.33015,
+    18.05821
+  ],
+  "Mora Station": [
+    61.00886,
+    14.558929
+  ],
+  "Kristinebergs B&B (Mora)": [
+    61.0100949,
+    14.5575303
+  ],
+  "Kråkbergsbadet": [
+    61.03692,
+    14.528749
+  ],
+  "Korsnäsgården": [
+    61.004892,
+    14.540932
+  ],
+  "Nusnäs": [
+    60.962502,
+    14.64618
+  ],
+  "Karlstad Central Station": [
+    59.378003,
+    13.499076
+  ],
+  "Scandic Karlstad City": [
+    59.3793258,
+    13.5056192
+  ],
+  "Julins Backyard Barbecue": [
+    59.37986,
+    13.557358
+  ],
+  "Oslo S": [
+    59.910928,
+    10.752844
+  ],
+  "Tøyengata 26A (Oslo)": [
+    59.913928,
+    10.766941
+  ],
+  "Vigeland Park": [
+    59.924678,
+    10.707739
+  ],
+  "Voss Station": [
+    60.629105,
+    6.410115
+  ],
+  "Tråstølsvegen 344 (Voss)": [
+    60.659118,
+    6.407986
+  ],
+  "Myrdal": [
+    60.735171,
+    7.122829
+  ],
+  "Flåm": [
+    60.862952,
+    7.113178
+  ],
+  "Gudvangen": [
+    60.879109,
+    6.83963
+  ],
+  "Bergen Station": [
+    60.390279,
+    5.333397
+  ],
+  "Fløibanen Base Station": [
+    60.39641,
+    5.328564
+  ],
+  "Fløyen": [
+    60.394782,
+    5.342646
+  ],
+  "Sydneskleiven 4 (Bergen)": [
+    60.3906818,
+    5.3167584
+  ],
+  "Bergen Airport (BGO)": [
+    60.296533,
+    5.219818
+  ],
+  "Stadsträdgården (Karlstad)": [
+    59.375535,
+    13.502073
+  ],
+  "Aker Brygge (Oslo)": [
+    59.909928,
+    10.725042
+  ],
+  "Karl Johans gate (Oslo)": [
+    59.913445,
+    10.740076
+  ],
+  "Bryggen (Bergen)": [
+    60.397726,
+    5.322933
+  ]
+};
+
+  // Transport legs: named origin/destination hub (keys into HUB_COORDS).
+  // Legs with only one meaningful endpoint (e.g. "Arrive Frankfurt") set
+  // just one side. The trip's home departure/return (Denver <-> Colorado
+  // Springs) is intentionally out of scope -- not a place being visited.
+  const MAP_TRANSPORT = {
+  "1": {
+    "destination": "Denver Airport"
+  },
+  "3": {
+    "origin": "Denver Airport",
+    "destination": "Frankfurt Airport"
+  },
+  "5": {
+    "destination": "Frankfurt Airport"
+  },
+  "7": {
+    "origin": "Frankfurt Airport",
+    "destination": "Stockholm Arlanda Airport"
+  },
+  "9": {
+    "origin": "Stockholm Arlanda Airport",
+    "destination": "Munkbron 15 (Stockholm)"
+  },
+  "21": {
+    "origin": "Royal Palace (Stockholm)",
+    "destination": "Östermalms Saluhall"
+  },
+  "24": {
+    "origin": "Östermalm",
+    "destination": "Gamla Stan"
+  },
+  "28": {
+    "origin": "Munkbron 15 (Stockholm)",
+    "destination": "Vasa Museum"
+  },
+  "32": {
+    "origin": "Skansen",
+    "destination": "Munkbron 15 (Stockholm)"
+  },
+  "38": {
+    "origin": "Nybrokajen",
+    "destination": "Sandhamn"
+  },
+  "40": {
+    "origin": "Sandhamn",
+    "destination": "Nybrokajen"
+  },
+  "45": {
+    "origin": "Munkbron 15 (Stockholm)",
+    "destination": "Stockholm Central Station"
+  },
+  "46": {
+    "origin": "Stockholm Central Station",
+    "destination": "Mora Station"
+  },
+  "53": {
+    "origin": "Kristinebergs B&B (Mora)",
+    "destination": "Kråkbergsbadet"
+  },
+  "55": {
+    "origin": "Kråkbergsbadet",
+    "destination": "Korsnäsgården"
+  },
+  "58": {
+    "origin": "Mora Station",
+    "destination": "Nusnäs"
+  },
+  "62": {
+    "origin": "Nusnäs",
+    "destination": "Mora Station"
+  },
+  "71": {
+    "origin": "Mora Station",
+    "destination": "Karlstad Central Station"
+  },
+  "76": {
+    "origin": "Julins Backyard Barbecue",
+    "destination": "Scandic Karlstad City"
+  },
+  "80": {
+    "origin": "Karlstad Central Station",
+    "destination": "Oslo S"
+  },
+  "112": {
+    "origin": "Tøyengata 26A (Oslo)",
+    "destination": "Vigeland Park"
+  },
+  "114": {
+    "origin": "Vigeland Park",
+    "destination": "Tøyengata 26A (Oslo)"
+  },
+  "119": {
+    "origin": "Oslo S",
+    "destination": "Voss Station"
+  },
+  "120": {
+    "origin": "Voss Station",
+    "destination": "Tråstølsvegen 344 (Voss)"
+  },
+  "122": {
+    "origin": "Tråstølsvegen 344 (Voss)",
+    "destination": "Voss Station"
+  },
+  "123": {
+    "origin": "Voss Station",
+    "destination": "Myrdal"
+  },
+  "124": {
+    "origin": "Myrdal",
+    "destination": "Flåm"
+  },
+  "126": {
+    "origin": "Flåm",
+    "destination": "Gudvangen"
+  },
+  "128": {
+    "origin": "Gudvangen",
+    "destination": "Flåm"
+  },
+  "129": {
+    "origin": "Flåm",
+    "destination": "Myrdal"
+  },
+  "130": {
+    "origin": "Myrdal",
+    "destination": "Voss Station"
+  },
+  "133": {
+    "origin": "Voss Station",
+    "destination": "Tråstølsvegen 344 (Voss)"
+  },
+  "135": {
+    "origin": "Tråstølsvegen 344 (Voss)",
+    "destination": "Voss Station"
+  },
+  "136": {
+    "origin": "Voss Station",
+    "destination": "Bergen Station"
+  },
+  "147": {
+    "origin": "Fløibanen Base Station",
+    "destination": "Fløyen"
+  },
+  "149": {
+    "origin": "Fløyen",
+    "destination": "Fløibanen Base Station"
+  },
+  "162": {
+    "origin": "Sydneskleiven 4 (Bergen)",
+    "destination": "Bergen Airport (BGO)"
+  },
+  "163": {
+    "origin": "Bergen Airport (BGO)",
+    "destination": "Frankfurt Airport"
+  },
+  "165": {
+    "origin": "Frankfurt Airport",
+    "destination": "Denver Airport"
+  },
+  "166": {
+    "origin": "Denver Airport"
+  }
+};
+
+  // Walking legs whose origin/destination is a genuine waypoint that isn't
+  // already represented by a lodging/activity/dining/transport-hub pin
+  // (e.g. "Bryggen" -- day 14 leg 151 -- has no pin of its own otherwise,
+  // even though a nearby restaurant does). Unlike MAP_TRANSPORT these are
+  // shown with the "activity" pin color, since they read as places
+  // visited rather than stations passed through. Most walking legs need
+  // no entry here at all because both ends already coincide with an
+  // existing pin.
+  const MAP_WALK_HUBS = {
+    "74": { "destination": "Stadsträdgården (Karlstad)" },
+    "98": { "destination": "Aker Brygge (Oslo)" },
+    "100": { "origin": "Aker Brygge (Oslo)" },
+    "104": { "destination": "Karl Johans gate (Oslo)" },
+    "105": { "origin": "Karl Johans gate (Oslo)" },
+    "151": { "destination": "Bryggen (Bergen)" }
+  };
+
   // Walking legs: explicit origin/destination search text for Google Maps
   // walking directions. Either side left unset auto-resolves: an "A -> B"
   // half naming a known lodging by name uses its exact coordinates; a leg
@@ -752,6 +1204,7 @@
     const el = document.createElement("div");
     const cat = categorizeLeg(leg);
     el.className = "leg cat-" + cat;
+    el.setAttribute("data-leg-num", leg.num);
     const times = leg.depart || leg.arrive
       ? `${leg.depart || ""}${leg.depart && leg.arrive ? '<span class="arrow">→</span>' : ""}${leg.arrive || ""}`
       : "";
@@ -760,7 +1213,7 @@
     const chipLabel = leg.mode || CATEGORY_META[cat].label;
     const mapLink = mapLinkForLeg(leg, day, cat);
     const mapLinkHtml = mapLink
-      ? `<a class="leg-map-link" href="${mapLink.url}" target="_blank" rel="noopener">${mapLink.type === "walk" ? "🚶 Walking directions" : "📍 View on map"}</a>`
+      ? `<a class="leg-map-link" href="${mapLink.url}" target="_blank" rel="noopener">${mapLink.type === "walk" ? "🚶 Walking directions" : "📍 View on Google Maps"}</a>`
       : "";
     el.innerHTML = `
       <span class="num">${leg.num}</span>
@@ -772,6 +1225,15 @@
         ${mapLinkHtml}
       </div>
     `;
+    const pinRef = TRIP_MAP_POINTS.legPinIndex[leg.num];
+    if (pinRef) {
+      const mapViewBtn = document.createElement("button");
+      mapViewBtn.type = "button";
+      mapViewBtn.className = "leg-map-link";
+      mapViewBtn.textContent = "🗺️ Map view";
+      mapViewBtn.addEventListener("click", () => goToMapPin(pinRef.key, pinRef.lat, pinRef.lon));
+      el.querySelector(".body").appendChild(mapViewBtn);
+    }
     return el;
   }
 
@@ -788,9 +1250,12 @@
     // Only real candidates carry an address; placeholders like "Dinner —
     // not yet chosen" have none, so they get no map link.
     const mapLink = d.address
-      ? `<a href="${googleMapsSearchUrl(d.address)}" target="_blank" rel="noopener">📍 View on map</a>`
+      ? `<a href="${googleMapsSearchUrl(d.address)}" target="_blank" rel="noopener">📍 View on Google Maps</a>`
       : "";
-    const contactBits = [phoneLink, websiteLink, mapLink].filter(Boolean).join(" · ");
+    const legNum = legNumForDiningAddress(d.address);
+    const pinRef = legNum != null ? TRIP_MAP_POINTS.legPinIndex[legNum] : null;
+    const mapViewHtml = pinRef ? `<button type="button" class="dining-map-view-btn">🗺️ Map view</button>` : "";
+    const contactBits = [phoneLink, websiteLink, mapLink, mapViewHtml].filter(Boolean).join(" · ");
     el.innerHTML = `
       <div class="row">
         <span class="name">${d.name}</span>
@@ -800,6 +1265,9 @@
       ${d.description ? `<p class="desc">${d.description}</p>` : ""}
       ${contactBits ? `<div class="contact-line">${contactBits}</div>` : ""}
     `;
+    if (pinRef) {
+      el.querySelector(".dining-map-view-btn").addEventListener("click", () => goToMapPin(pinRef.key, pinRef.lat, pinRef.lon));
+    }
     return el;
   }
 
@@ -1010,6 +1478,413 @@
     return container;
   }
 
+  // ---------------- Trip map (Leaflet) ----------------
+  let tripMapInstance = null;
+  // Survives across navigating away from and back to the Map view (in
+  // memory only -- resets on a full page reload) so the map reopens at
+  // the same pan/zoom, with the same popup open, rather than resetting to
+  // the whole-trip overview every time.
+  let tripMapPersisted = null;
+  let tripMapOpenPopupKey = null;
+
+  function teardownTripMap() {
+    if (tripMapInstance) {
+      try {
+        tripMapPersisted = {
+          center: tripMapInstance.getCenter(),
+          zoom: tripMapInstance.getZoom(),
+          openPopupKey: tripMapOpenPopupKey
+        };
+      } catch (e) {
+        // Map never got an initial view set (e.g. left before the first
+        // render finished) -- nothing meaningful to persist.
+      }
+      tripMapInstance.remove();
+      tripMapInstance = null;
+    }
+  }
+
+  // Jump straight to a specific pin on the trip map (from a "Map view"
+  // link in the day itinerary) -- centers on it, zooms in close enough
+  // that its layer is visible, and opens its popup. Reuses the same
+  // tripMapPersisted mechanism that restores state when navigating back
+  // to the Map tab, since "go to this exact pin" is the same operation.
+  function goToMapPin(key, lat, lon) {
+    tripMapPersisted = { center: [lat, lon], zoom: 15, openPopupKey: key };
+    state.view = "map";
+    render();
+    window.scrollTo(0, 0);
+  }
+
+  function categoryMapColor(kind) {
+    // Mirrors --cat-* in styles.css exactly (for the categories that also
+    // appear in the Logistics list), so a pin's color always matches that
+    // leg's color there. "dining-suggested" is map-only -- it doesn't
+    // change how a suggested-vs-confirmed dinner looks in the Logistics
+    // list, only how its pin looks on the trip map.
+    const colors = {
+      activity: "#7f30a6",
+      dining: "#b43622",
+      "dining-suggested": "#e75586",
+      lodging: "#2f57c6",
+      transport: "#1d9a81"
+    };
+    return colors[kind] || "#35576b";
+  }
+
+  function tripMapDotHtml(kind) {
+    return `<span class="tmp-dot" style="background:${categoryMapColor(kind)}"></span>`;
+  }
+
+  function appendVisitRows(popupEl, visits, goToDayFn) {
+    visits
+      .slice()
+      .sort((a, b) => a.dayNumber - b.dayNumber)
+      .forEach((v) => {
+        const row = document.createElement("button");
+        row.className = "tmp-goto tmp-visit";
+        row.innerHTML = `<span class="tmp-visit-day">Day ${v.dayNumber}${v.time ? " · " + v.time : ""}</span><span class="tmp-visit-label">${tripMapDotHtml(v.kind)}${v.label}</span>`;
+        row.addEventListener("click", () => goToDayFn(v.dayIndex, v.num));
+        popupEl.appendChild(row);
+      });
+  }
+
+  function appendTransitVisitRows(popupEl, visits, goToDayFn) {
+    if (!visits || !visits.length) return;
+    const label = document.createElement("div");
+    label.className = "tmp-transit-label";
+    label.textContent = "Also passes through here:";
+    popupEl.appendChild(label);
+    appendVisitRows(popupEl, visits, goToDayFn);
+  }
+
+  function makeTripMapIcon(kind, dotSize) {
+    // Tap target is always >= 30px even when the visible dot is smaller,
+    // so detail pins stay comfortably tappable on a phone.
+    const tapSize = Math.max(dotSize + 14, 30);
+    return L.divIcon({
+      className: "trip-map-pin",
+      html: `<span style="background:${categoryMapColor(kind)};width:${dotSize}px;height:${dotSize}px;"></span>`,
+      iconSize: [tapSize, tapSize],
+      iconAnchor: [tapSize / 2, tapSize / 2],
+      popupAnchor: [0, -tapSize / 2]
+    });
+  }
+
+  function buildTripMapPoints() {
+    const cityPoints = LODGING.map((l) => ({
+      lat: l.lat,
+      lon: l.lon,
+      location: l.location,
+      name: l.name,
+      key: "city:" + l.location
+    }));
+    const cityPointByLocation = {};
+    cityPoints.forEach((p) => {
+      cityPointByLocation[p.location] = p;
+    });
+
+    // leg.num -> { key, lat, lon } for every leg that has *some* pin
+    // representing it on the trip map, regardless of category. Powers the
+    // "Map view" link in the Logistics list and Dining options.
+    const legPinIndex = {};
+
+    const detailPoints = [];
+    DAYS.forEach((day, dayIndex) => {
+      day.legs.forEach((leg) => {
+        const cat = categorizeLeg(leg);
+        if (cat === "lodging") {
+          const lodging = lodgingForLeg(leg, day);
+          const cityPoint = lodging && cityPointByLocation[lodging.location];
+          if (cityPoint) legPinIndex[leg.num] = { key: cityPoint.key, lat: cityPoint.lat, lon: cityPoint.lon };
+          return;
+        }
+        let coords = null;
+        if (cat === "activity") coords = MAP_POINT_COORDS_ACTIVITY[leg.num];
+        else if (cat === "dining") coords = MAP_POINT_COORDS_DINING[leg.num];
+        if (!coords) return;
+        const pinKind = cat === "dining" && !MAP_DINING_CONFIRMED.has(leg.num) ? "dining-suggested" : cat;
+        const label = cat === "dining" && MAP_DINING_LABEL[leg.num] ? MAP_DINING_LABEL[leg.num] : leg.activity;
+        const point = {
+          lat: coords[0],
+          lon: coords[1],
+          kind: pinKind,
+          dayIndex,
+          dayNumber: day.day_number,
+          num: leg.num,
+          label,
+          time: leg.depart || leg.arrive || "",
+          key: "detail:" + leg.num
+        };
+        detailPoints.push(point);
+        legPinIndex[leg.num] = { key: point.key, lat: point.lat, lon: point.lon };
+      });
+    });
+
+    // Transport legs (train/bus/ferry/funicular/taxi/flight) and walking
+    // legs both reference named hubs/waypoints rather than mapping one pin
+    // per leg -- the same station is usually touched by several legs (e.g.
+    // Voss Station appears in 4). Aggregate into one pin per named place,
+    // each carrying the list of legs/days that pass through it. Transport
+    // hubs (stations, airports) get the "transport" pin color; walking
+    // waypoints (e.g. Bryggen, Aker Brygge) get "activity" since they read
+    // as places visited, not stations passed through.
+    const hubVisits = {};
+    const hubKind = {};
+    const legHubPreference = {}; // leg.num -> preferred hub name (destination-first)
+    function collectHubRoutes(category, routeTable, kind) {
+      DAYS.forEach((day, dayIndex) => {
+        day.legs.forEach((leg) => {
+          if (categorizeLeg(leg) !== category) return;
+          const route = routeTable[leg.num];
+          if (!route) return;
+          [route.origin, route.destination].filter(Boolean).forEach((hubName) => {
+            if (!HUB_COORDS[hubName]) return;
+            hubKind[hubName] = kind;
+            if (!hubVisits[hubName]) hubVisits[hubName] = [];
+            hubVisits[hubName].push({
+              dayIndex,
+              dayNumber: day.day_number,
+              num: leg.num,
+              label: leg.activity,
+              time: leg.depart || leg.arrive || "",
+              kind
+            });
+          });
+          const preferred =
+            route.destination && HUB_COORDS[route.destination]
+              ? route.destination
+              : route.origin && HUB_COORDS[route.origin]
+                ? route.origin
+                : null;
+          if (preferred) legHubPreference[leg.num] = preferred;
+        });
+      });
+    }
+    collectHubRoutes("transport", MAP_TRANSPORT, "transport");
+    collectHubRoutes("walking", MAP_WALK_HUBS, "activity");
+    // Several hubs intentionally reuse the exact coordinates of an existing
+    // city/activity/dining pin (e.g. the "Flåm" hub and the "Free time in
+    // Flåm" activity leg are the same real-world point). Rather than
+    // stacking a second marker exactly on top of the first -- or worse,
+    // silently dropping the transit info -- merge the hub's leg visits
+    // into whichever point already occupies that spot, as a
+    // `transitVisits` list on top of its own info. Only hubs at a
+    // genuinely new location (stations, stops) get their own separate pin.
+    const coordKey = (lat, lon) => lat.toFixed(5) + "," + lon.toFixed(5);
+    const pointsByCoord = {};
+    [...cityPoints, ...detailPoints].forEach((p) => {
+      pointsByCoord[coordKey(p.lat, p.lon)] = p;
+    });
+
+    const hubPoints = [];
+    const hubPointByName = {};
+    Object.keys(hubVisits).forEach((hubName) => {
+      const [lat, lon] = HUB_COORDS[hubName];
+      const existing = pointsByCoord[coordKey(lat, lon)];
+      if (existing) {
+        existing.transitVisits = hubVisits[hubName];
+      } else {
+        const hubPoint = {
+          lat,
+          lon,
+          name: hubName,
+          kind: hubKind[hubName],
+          visits: hubVisits[hubName],
+          key: "hub:" + hubName
+        };
+        hubPoints.push(hubPoint);
+        hubPointByName[hubName] = hubPoint;
+      }
+    });
+
+    // Resolve each transport/walking leg's preferred hub into the pin that
+    // *actually* represents it now -- which may be a merged-into
+    // city/detail point rather than the hub itself.
+    Object.keys(legHubPreference).forEach((num) => {
+      const hubName = legHubPreference[num];
+      const [lat, lon] = HUB_COORDS[hubName];
+      const existing = pointsByCoord[coordKey(lat, lon)];
+      if (existing) {
+        legPinIndex[num] = { key: existing.key, lat: existing.lat, lon: existing.lon };
+      } else if (hubPointByName[hubName]) {
+        legPinIndex[num] = { key: hubPointByName[hubName].key, lat, lon };
+      }
+    });
+
+    return { cityPoints, detailPoints, hubPoints, legPinIndex };
+  }
+
+  // Computed once -- the underlying trip data never changes at runtime, so
+  // both the day view (for "Map view" links) and the map view itself share
+  // this rather than rebuilding it on every render.
+  const TRIP_MAP_POINTS = buildTripMapPoints();
+
+  const TRIP_MAP_DETAIL_MIN_ZOOM = 8;
+
+  // Straight-line distance in km (haversine) -- used to find which
+  // activity/dining/hub pins "belong" to a city for the zoom-in bounds
+  // below, since some day trips (Voss's Norway in a Nutshell loop through
+  // Myrdal/Flåm/Gudvangen) range up to ~50km from the lodging itself.
+  function kmBetween(lat1, lon1, lat2, lon2) {
+    const R = 6371;
+    const dLat = ((lat2 - lat1) * Math.PI) / 180;
+    const dLon = ((lon2 - lon1) * Math.PI) / 180;
+    const a =
+      Math.sin(dLat / 2) ** 2 +
+      Math.cos((lat1 * Math.PI) / 180) * Math.cos((lat2 * Math.PI) / 180) * Math.sin(dLon / 2) ** 2;
+    return 2 * R * Math.asin(Math.sqrt(a));
+  }
+
+  function renderTripMapView() {
+    const container = document.createElement("div");
+    container.className = "trip-map-view";
+
+    const mapEl = document.createElement("div");
+    mapEl.className = "trip-map-canvas";
+    container.appendChild(mapEl);
+
+    const hint = document.createElement("p");
+    hint.className = "trip-map-hint";
+    hint.textContent = "Tap a city to zoom in, then tap any pin for details.";
+    container.appendChild(hint);
+
+    const legend = document.createElement("div");
+    legend.className = "trip-map-legend";
+    legend.innerHTML = `
+      <span class="tml-item"><span class="tml-dot" style="background:${categoryMapColor("lodging")}"></span>City / lodging</span>
+      <span class="tml-item"><span class="tml-dot" style="background:${categoryMapColor("activity")}"></span>Activity</span>
+      <span class="tml-item"><span class="tml-dot" style="background:${categoryMapColor("dining")}"></span>Dining (confirmed)</span>
+      <span class="tml-item"><span class="tml-dot" style="background:${categoryMapColor("dining-suggested")}"></span>Dining (suggested)</span>
+      <span class="tml-item"><span class="tml-dot" style="background:${categoryMapColor("transport")}"></span>Station / stop</span>
+    `;
+    container.appendChild(legend);
+
+    // Leaflet needs the container attached to the live DOM (with real
+    // layout dimensions) before init, so defer to the next frame -- by
+    // then render() will have appended this view to #app.
+    requestAnimationFrame(() => {
+      if (state.view !== "map") return;
+
+      teardownTripMap();
+      const map = L.map(mapEl, { attributionControl: true, zoomControl: true, minZoom: 4, maxZoom: 18 });
+      tripMapInstance = map;
+
+      L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        maxZoom: 18,
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors'
+      }).addTo(map);
+
+      const { cityPoints, detailPoints, hubPoints } = TRIP_MAP_POINTS;
+
+      // Track every marker by its stable key so a saved popup can be
+      // reopened after a rebuild, and so we know which pin's popup is
+      // currently open (for teardownTripMap() to save when leaving).
+      const pinsByKey = {};
+      function trackMarker(marker, key) {
+        pinsByKey[key] = marker;
+        marker.on("popupopen", () => {
+          tripMapOpenPopupKey = key;
+        });
+        marker.on("popupclose", () => {
+          if (tripMapOpenPopupKey === key) tripMapOpenPopupKey = null;
+        });
+      }
+
+      const cityLayer = L.layerGroup();
+      cityPoints.forEach((p) => {
+        const marker = L.marker([p.lat, p.lon], { icon: makeTripMapIcon("lodging", 30) });
+        const popupEl = document.createElement("div");
+        popupEl.className = "trip-map-popup";
+        popupEl.innerHTML = `
+          <div class="tmp-title">${tripMapDotHtml("lodging")}${p.location}</div>
+          <div class="tmp-sub">${p.name}</div>
+        `;
+        const zoomBtn = document.createElement("button");
+        zoomBtn.className = "tmp-goto";
+        zoomBtn.textContent = "Zoom in →";
+        zoomBtn.addEventListener("click", () => {
+          // Fit to the city plus anything within ~60km of it, so a spread-out
+          // day trip (e.g. Voss's Myrdal/Flåm/Gudvangen loop) lands at a zoom
+          // that shows the whole route, not just the lodging's own block.
+          const nearby = [...detailPoints, ...hubPoints].filter(
+            (n) => kmBetween(p.lat, p.lon, n.lat, n.lon) <= 60
+          );
+          if (nearby.length) {
+            const bounds = L.latLngBounds([[p.lat, p.lon], ...nearby.map((n) => [n.lat, n.lon])]);
+            map.flyToBounds(bounds, { padding: [40, 40], maxZoom: 15, duration: 0.6 });
+          } else {
+            map.flyTo([p.lat, p.lon], 14, { duration: 0.6 });
+          }
+        });
+        popupEl.appendChild(zoomBtn);
+        appendTransitVisitRows(popupEl, p.transitVisits, goToDay);
+        marker.bindPopup(popupEl);
+        trackMarker(marker, p.key);
+        cityLayer.addLayer(marker);
+      });
+      cityLayer.addTo(map);
+
+      const detailLayer = L.layerGroup();
+      detailPoints.forEach((p) => {
+        const marker = L.marker([p.lat, p.lon], { icon: makeTripMapIcon(p.kind, 16) });
+        const popupEl = document.createElement("div");
+        popupEl.className = "trip-map-popup";
+        popupEl.innerHTML = `
+          <div class="tmp-eyebrow">Day ${p.dayNumber}${p.time ? " · " + p.time : ""}</div>
+          <div class="tmp-title">${tripMapDotHtml(p.kind)}${p.label}</div>
+        `;
+        const gotoBtn = document.createElement("button");
+        gotoBtn.className = "tmp-goto";
+        gotoBtn.textContent = `Go to Day ${p.dayNumber} →`;
+        gotoBtn.addEventListener("click", () => goToDay(p.dayIndex, p.num));
+        popupEl.appendChild(gotoBtn);
+        appendTransitVisitRows(popupEl, p.transitVisits, goToDay);
+        marker.bindPopup(popupEl);
+        trackMarker(marker, p.key);
+        detailLayer.addLayer(marker);
+      });
+
+      const hubLayer = L.layerGroup();
+      hubPoints.forEach((p) => {
+        const marker = L.marker([p.lat, p.lon], { icon: makeTripMapIcon(p.kind, p.kind === "activity" ? 16 : 14) });
+        const popupEl = document.createElement("div");
+        popupEl.className = "trip-map-popup";
+        const title = document.createElement("div");
+        title.className = "tmp-title";
+        title.innerHTML = tripMapDotHtml(p.kind) + p.name;
+        popupEl.appendChild(title);
+        appendVisitRows(popupEl, p.visits, goToDay);
+        marker.bindPopup(popupEl);
+        trackMarker(marker, p.key);
+        hubLayer.addLayer(marker);
+      });
+
+      function updateDetailVisibility() {
+        const shouldShow = map.getZoom() >= TRIP_MAP_DETAIL_MIN_ZOOM;
+        [detailLayer, hubLayer].forEach((layer) => {
+          const isShown = map.hasLayer(layer);
+          if (shouldShow && !isShown) layer.addTo(map);
+          else if (!shouldShow && isShown) map.removeLayer(layer);
+        });
+      }
+      map.on("zoomend", updateDetailVisibility);
+
+      if (tripMapPersisted) {
+        map.setView(tripMapPersisted.center, tripMapPersisted.zoom, { animate: false });
+        updateDetailVisibility();
+        const savedPin = tripMapPersisted.openPopupKey && pinsByKey[tripMapPersisted.openPopupKey];
+        if (savedPin) savedPin.openPopup();
+      } else {
+        const bounds = L.latLngBounds(cityPoints.map((p) => [p.lat, p.lon]));
+        map.fitBounds(bounds, { padding: [30, 30] });
+        updateDetailVisibility();
+      }
+    });
+
+    return container;
+  }
+
   // ---------------- Checklist view ----------------
   function renderChecklistView() {
     const container = document.createElement("div");
@@ -1086,6 +1961,7 @@
     nav.className = "bottom-nav";
     const items = [
       { key: "day", icon: "🗓️", label: "Day" },
+      { key: "map", icon: "🗺️", label: "Map" },
       { key: "search", icon: "🔍", label: "Search" },
       { key: "checklist", icon: "✓", label: "Checklist" }
     ];
@@ -1100,10 +1976,12 @@
   }
 
   function render() {
+    teardownTripMap();
     root.innerHTML = "";
     root.appendChild(renderHeader());
     let view;
     if (state.view === "day") view = renderDayView();
+    else if (state.view === "map") view = renderTripMapView();
     else if (state.view === "search") view = renderSearchView();
     else view = renderChecklistView();
     root.appendChild(view);

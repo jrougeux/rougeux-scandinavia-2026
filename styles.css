@@ -51,19 +51,22 @@
   /* Trip-progress accent (not tied to any single category or country) */
   --accent: #35576b;
 
-  /* Activity category color-coding */
-  --cat-lodging: #4f7396;
-  --cat-lodging-bg: #e7eef3;
-  --cat-transport: #2f6690;
-  --cat-transport-bg: #e4edf4;
-  --cat-walking: #4c7a5a;
-  --cat-walking-bg: #e7f0ea;
-  --cat-dining: #a24a2b;
-  --cat-dining-bg: #f6e8e0;
-  --cat-activity: #7c5a91;
-  --cat-activity-bg: #efe8f4;
-  --cat-note: #8a6d1f;
-  --cat-note-bg: #f4eeda;
+  /* Activity category color-coding -- more saturated + more hue separation
+     than the original muted set, so categories read apart at a glance both
+     in the Logistics list and as map pins (see categoryMapColor() in
+     app.js, which mirrors these exact hex values). */
+  --cat-lodging: #2f57c6;
+  --cat-lodging-bg: #e6eaf5;
+  --cat-transport: #1d9a81;
+  --cat-transport-bg: #e6f5f2;
+  --cat-walking: #257e46;
+  --cat-walking-bg: #e6f5eb;
+  --cat-dining: #b43622;
+  --cat-dining-bg: #f5e8e6;
+  --cat-activity: #7f30a6;
+  --cat-activity-bg: #f0e6f5;
+  --cat-note: #7e6c16;
+  --cat-note-bg: #f5f2e6;
 }
 
 * { box-sizing: border-box; }
@@ -419,9 +422,17 @@ input:focus-visible {
   border-left: 4px solid transparent;
   background: var(--surface);
   align-items: start;
+  transition: background 1.2s ease-out;
 }
 .leg:last-child { border-bottom: none; }
 .leg:nth-child(even) { background: var(--surface-2); }
+
+/* Briefly flashes when a "Map view" popup or "Go to Day" link jumps here,
+   so the destination leg is unmistakable rather than just scrolled-to. */
+.leg.leg-highlight {
+  background: var(--cat-note-bg);
+  transition: background 0.15s ease-out;
+}
 
 .leg.cat-lodging   { border-left-color: var(--cat-lodging); }
 .leg.cat-transport { border-left-color: var(--cat-transport); }
@@ -484,10 +495,17 @@ input:focus-visible {
 .leg .leg-map-link {
   display: inline-block;
   margin-top: 6px;
+  margin-right: 14px;
   font-size: 12.5px;
   font-weight: 600;
   color: var(--accent);
   text-decoration: none;
+  /* resets so this also looks right applied to a <button> */
+  border: none;
+  background: none;
+  padding: 0;
+  font-family: inherit;
+  cursor: pointer;
 }
 .leg .leg-map-link:active { opacity: 0.6; }
 
@@ -642,6 +660,19 @@ input:focus-visible {
 .dining-item .desc { font-size: 13.5px; color: var(--text-dim); line-height: 1.55; margin: 0; }
 .dining-item .contact-line { font-family: var(--font-mono); font-size: 12.5px; color: var(--text-faint); margin-top: 6px; }
 .dining-item .contact-line a { color: var(--text-dim); text-decoration: underline; text-underline-offset: 2px; }
+.dining-item .contact-line .dining-map-view-btn {
+  border: none;
+  background: none;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  color: var(--text-dim);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
 
 .contact-item {
   display: flex;
@@ -712,6 +743,124 @@ input:focus-visible {
   text-align: center;
 }
 .day-jump button:disabled { opacity: 0.3; }
+
+/* ---------- Trip map view ---------- */
+.trip-map-view { padding: 0 0 16px; }
+.trip-map-canvas {
+  width: 100%;
+  height: 68vh;
+  min-height: 360px;
+  background: var(--surface-2);
+}
+.trip-map-hint {
+  margin: 10px 16px 0;
+  font-size: 12.5px;
+  color: var(--text-faint);
+  text-align: center;
+}
+.trip-map-legend {
+  display: flex;
+  justify-content: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin: 8px 16px 0;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.tml-item { display: inline-flex; align-items: center; gap: 5px; }
+.tml-dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; border: 1px solid rgba(255,255,255,0.6); }
+
+.trip-map-pin {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.trip-map-pin span {
+  display: block;
+  border-radius: 50%;
+  border: 2px solid #fff;
+  box-shadow: 0 1px 4px rgba(38,36,32,0.45);
+}
+
+.trip-map-popup { font-family: var(--font-body); min-width: 160px; }
+.trip-map-popup .tmp-eyebrow {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-faint);
+  margin-bottom: 3px;
+}
+.trip-map-popup .tmp-title { font-weight: 600; font-size: 14px; color: var(--text); line-height: 1.35; }
+.trip-map-popup .tmp-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+  margin-right: 5px;
+  border: 1px solid rgba(255,255,255,0.7);
+  vertical-align: middle;
+}
+.trip-map-popup .tmp-sub { font-size: 12.5px; color: var(--text-dim); margin-top: 2px; }
+.trip-map-popup .tmp-goto {
+  display: block;
+  width: 100%;
+  margin-top: 8px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+  color: var(--accent);
+  font-size: 12.5px;
+  font-weight: 600;
+  text-align: center;
+  touch-action: manipulation;
+}
+.trip-map-popup .tmp-goto:active { background: var(--line); }
+
+.trip-map-popup .tmp-transit-label {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-faint);
+}
+.trip-map-popup .tmp-visit {
+  text-align: left;
+  margin-top: 6px;
+}
+.trip-map-popup .tmp-visit-day {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-faint);
+}
+.trip-map-popup .tmp-visit-label {
+  display: block;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--accent);
+  margin-top: 1px;
+}
+.trip-map-popup { max-height: 260px; overflow-y: auto; }
+
+/* Restyle Leaflet's chrome to match the app's design system instead of
+   its default white/blue look. */
+.leaflet-popup-content-wrapper {
+  background: var(--surface);
+  color: var(--text);
+  border-radius: var(--radius);
+  box-shadow: 0 4px 16px rgba(38,36,32,0.25);
+}
+.leaflet-popup-content { margin: 10px 12px; }
+.leaflet-popup-tip { background: var(--surface); }
+.leaflet-container { font-family: var(--font-body); }
+.leaflet-control-attribution { font-size: 10px; }
 
 /* ---------- Search view ---------- */
 .search-view { padding: 16px; max-width: 640px; margin: 0 auto; }

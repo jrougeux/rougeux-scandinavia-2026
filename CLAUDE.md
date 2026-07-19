@@ -3,9 +3,11 @@
 A static, offline-first PWA showing the full 16-day trip logistics itinerary
 (Jul 22 – Aug 6, 2026: Stockholm → Mora → Karlstad → Oslo → Voss → Bergen).
 
-No build step, no backend, no dependencies. Plain HTML/CSS/JS, deployable by
-dragging the folder onto any static host (Netlify Drop, GitHub Pages, Cloudflare
-Pages, Vercel, etc.).
+No build step, no backend. Plain HTML/CSS/JS, deployable by dragging the folder
+onto any static host (Netlify Drop, GitHub Pages, Cloudflare Pages, Vercel,
+etc.). One runtime dependency: Leaflet.js, self-hosted under `assets/leaflet/`
+(no CDN, no npm/build step) for the trip-wide map view — everything else is
+still dependency-free vanilla JS.
 
 ## Files
 
@@ -25,6 +27,10 @@ Pages, Vercel, etc.).
 - `assets/fonts/` — self-hosted DM Sans woff2 files (normal + italic, latin +
   latin-ext), loaded via `@font-face` in `styles.css` so the app works fully
   offline with no Google Fonts dependency
+- `assets/leaflet/` — vendored Leaflet 1.9.4 (`leaflet.js`, `leaflet.css`,
+  `images/`), loaded in `index.html` before `app.js`. Powers only the
+  trip-wide "Map" bottom-nav view; the per-day Map sections still use the
+  hand-rolled canvas renderer and don't need it
 
 ## Data shape
 
@@ -70,6 +76,87 @@ Defined as CSS custom properties in `styles.css` (`:root`):
   opens the location in Google Maps. See `renderMapSection()` in `app.js`.
   Tiles are only fetched the first time a day's Map section is opened (lazy,
   via `renderCollapsible()`'s `onFirstOpen` hook), not on every render.
+- Individual logistics legs (Logistics list) and dining candidates (Dining
+  options) each get a "📍 View on map" or "🚶 Walking directions" link where a
+  real location is known — see `mapLinkForLeg()`. These use Google Maps
+  search/directions URLs (query text only, e.g. `"Royal Palace, Stockholm,
+  Sweden"`), not the real lat/lon used for pins — see `MAP_SEARCH_QUERY`,
+  `MAP_DINING`, `MAP_WALK` in `app.js`. Deliberately hand-curated per leg
+  rather than parsed from `activity` text, since the text is too
+  inconsistent (many legs have no separator between the action and the
+  place name at all) for a reliable regex.
+- Bottom nav has a trip-wide "Map" view (`renderTripMapView()` in `app.js`,
+  between Day and Search) built on Leaflet: 6 city/lodging pins are always
+  visible; tapping one flies in and reveals that city's individual
+  activity/dining pins once zoomed past `TRIP_MAP_DETAIL_MIN_ZOOM`. Tapping
+  a detail pin's popup jumps into that day's full itinerary. Pin
+  coordinates (`MAP_POINT_COORDS_ACTIVITY`, `MAP_POINT_COORDS_DINING` in
+  `app.js`) are geocoded from the exact same query text as
+  `MAP_SEARCH_QUERY`/`MAP_DINING` above, so a pin's position always matches
+  where its leg-level "view on map" link points.
+- The trip map also plots "transport" legs (train/bus/ferry/funicular/taxi/
+  flight/drive) as named-hub pins — stations, airports, ferry/bus stops —
+  so e.g. the whole Voss → Myrdal → Flåm → Gudvangen Norway-in-a-Nutshell
+  day is visible, not just its activity/dining stops. Since the same hub
+  (e.g. Voss Station) is touched by several legs, these are aggregated one
+  pin per hub (`HUB_COORDS`, `MAP_TRANSPORT` in `app.js`) with a popup
+  listing every leg/day that passes through it, each jumping to that day.
+  If a hub sits at the exact coordinates of an existing city/activity/
+  dining pin (e.g. the "Flåm" hub and the "Free time in Flåm" activity leg
+  are the same real-world point), no second marker is created there --
+  instead the hub's visits are merged onto the existing pin's popup as an
+  "Also passes through here" list, so the info isn't lost, it just isn't a
+  separate stacked marker.
+- The map remembers its pan/zoom and which popup (if any) was open across
+  navigating away and back to the Map tab (in-memory only, via
+  `tripMapPersisted`/`tripMapOpenPopupKey` in `app.js` -- resets on a full
+  page reload). Every marker is tracked by a stable key (`"city:<location>"`,
+  `"detail:<leg.num>"`, `"hub:<hub name>"`) so the same popup can be
+  reopened after the map is torn down and rebuilt, since `render()` fully
+  wipes and recreates the DOM (and the Leaflet instance) on every
+  navigation -- see `trackMarker()` / `teardownTripMap()`.
+- Walking legs can also introduce a pin, not just activity/dining/transport
+  ones -- e.g. day 14 leg 151 ("Bryggen") is a plain walking destination
+  with no activity/dining leg of its own, so without this it wouldn't
+  appear anywhere on the map. `MAP_WALK_HUBS` (leg.num -> named place in
+  `HUB_COORDS`, same table transport hubs use) covers only the walking
+  legs whose endpoint isn't already another pin; most walking legs need no
+  entry since both ends already coincide with a lodging/activity/dining/
+  transport-hub pin. These render with the "activity" pin color (they're
+  places visited, not stations passed through) via `collectHubRoutes()`'s
+  `kind` parameter in `buildTripMapPoints()`.
+- Dining pins are split red vs. pink by `MAP_DINING_CONFIRMED` (leg.num
+  set) in `app.js`: a leg in that set (an actually booked/paid tour, or
+  dining[].status === "scheduled") gets the normal "dining" red; anything
+  else with a resolved address (status suggested/tentative/along-the-route,
+  or a hand-supplied venue with no formal dining[] entry) gets pin kind
+  "dining-suggested" (pink) instead. This only changes the map pin color --
+  the Logistics list's dining chip color is unaffected.
+- Dining map pins show the actual venue name (e.g. "Den Gyldene Freden"),
+  not the leg's often-generic activity text ("Dinner"/"Lunch") --
+  `MAP_DINING_LABEL` (leg.num -> name) in `app.js`.
+- Every leg/dining-item with a resolvable location gets a "🗺️ Map view"
+  link/button (separate from the "📍 View on Google Maps" external link)
+  that jumps into the Map tab centered on that exact pin with its popup
+  already open, via `goToMapPin()` -- it just sets `tripMapPersisted` and
+  switches views, reusing the same restore mechanism described above.
+  `buildTripMapPoints()` also returns `legPinIndex` (leg.num -> pin
+  key/coords) covering lodging/activity/dining/transport legs and the
+  walking legs listed in `MAP_WALK_HUBS`; it's computed once at module load
+  as `TRIP_MAP_POINTS`, not per-render, since the underlying trip data
+  never changes. Dining options section entries don't carry a leg.num of
+  their own, so `legNumForDiningAddress()` finds it by matching
+  `d.address` against `MAP_DINING`. Most walking legs (35 of 41) aren't in
+  `legPinIndex` and so get no "Map view" link -- only those in
+  `MAP_WALK_HUBS` are covered; the rest would need the same text-matching
+  generalization `mapLinkForLeg()` does for its Google Maps links.
+- Clicking a leg/day inside a map popup (the pin's own "Go to Day" button,
+  or a visit row in an "Also passes through here" list) jumps to that
+  *specific* leg within the day view, not just the top of the day --
+  `goToDay(dayIndex, legNum)` takes an optional second argument that
+  scrolls the matching `.leg[data-leg-num]` into view and flashes it
+  (`.leg-highlight` in `styles.css`). Prev/next-day and jump-sheet
+  navigation don't pass a `legNum` and keep the old top-of-day behavior.
 
 ## Local development
 
@@ -107,6 +194,7 @@ fs.writeFileSync('data.js', 'window.TRIP_DATA = ' + JSON.stringify(data) + ';\n'
 
 - Wire up a "current leg" auto-highlight based on device time/date during the
   actual trip window (Jul 22 – Aug 6, 2026)
-- Add lat/long to individual legs (not just lodging) for finer-grained map pins
 - Export/print view for a specific day
 - Sync checklist state across devices (currently per-device localStorage only)
+- Trip map: marker clustering for cities with many close-together pins
+  (Stockholm has ~15) so they don't overlap at street-level zoom
