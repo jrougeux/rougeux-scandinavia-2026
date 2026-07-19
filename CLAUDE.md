@@ -144,6 +144,17 @@ Defined as CSS custom properties in `styles.css` (`:root`):
   `buildTripMapPoints()` returns `diningPinByAddress` (address ->
   key/lat/lon) covering both leg-tied and address-only dining pins, which
   `renderDiningItem()` uses directly for its "Map view" button.
+- Every dining "View on Google Maps" link leads with the venue name, not
+  just the address (e.g. "Godt Brød, Thorvald Meyers gate 49, ..." rather
+  than just the address) -- an address alone can drop the Google Maps pin
+  on the wrong tenant in a shared building. `MAP_DINING` itself must stay
+  pure address text (it's also the join key for `diningPinByAddress`
+  against `dining[].address`); the name is prepended only at the point the
+  URL is built, in `mapLinkForLeg()` via `MAP_DINING_LABEL`, skipping a
+  small set (`MAP_DINING_QUERY_SKIP_LABEL`) where the address already
+  names the venue or the "label" isn't really a business name Google can
+  look up (a tour meeting point, a "near X" description). Dining options
+  entries do the same inline in `renderDiningItem()` using `d.name`.
 - Every leg/dining-item with a resolvable location gets a "🗺️ Map view"
   link/button (separate from the "📍 View on Google Maps" external link)
   that jumps into the Map tab centered on that exact pin with its popup

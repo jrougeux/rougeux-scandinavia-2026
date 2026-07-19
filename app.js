@@ -517,6 +517,10 @@
   // for the same venue point at the same place. Legs with no chosen venue
   // yet (address is still TBD/null in dining[], or the leg is a vague
   // "free time" placeholder) intentionally get no link.
+  // Pure address text (matches dining[].address exactly -- diningPinByAddress
+  // below keys off this, so don't prepend the venue name here; that's added
+  // at the point the Google Maps search URL is actually built, in
+  // mapLinkForLeg(), via MAP_DINING_LABEL).
   const MAP_DINING = {
   "12": "Österlånggatan 51, 111 31 Stockholm",
   "16": "Stortorget 18, 111 29 Stockholm",
@@ -590,6 +594,14 @@
     150: "Lunch near Fisketorget",
     155: "Bryggeloftet & Stuene"
   };
+
+  // Legs where MAP_DINING_LABEL shouldn't be prepended to the Google Maps
+  // query: 33/42 because the address text already names the venue (would
+  // duplicate it); 22/23 because the "label" is the tour name, not the
+  // physical venue's name (the meeting point is Östermalms Saluhall, a
+  // Viator tour has no Maps listing of its own); 150 because the label is
+  // a "near X" description, not a venue Google can look up.
+  const MAP_DINING_QUERY_SKIP_LABEL = new Set([22, 23, 33, 42, 150]);
 
   // Real lat/lon for the trip-wide map view (Task: bottom-nav "Map" tab).
   // Geocoded from the exact same query text as MAP_SEARCH_QUERY / MAP_DINING
@@ -1161,8 +1173,17 @@
     }
 
     if (cat === "dining") {
-      const query = MAP_DINING[leg.num];
-      if (!query) return null;
+      const address = MAP_DINING[leg.num];
+      if (!address) return null;
+      const label = MAP_DINING_LABEL[leg.num];
+      // Prepend the venue name so Google Maps resolves to that business's
+      // own listing rather than just dropping a pin on the address (which
+      // can land on the wrong tenant in a shared building). Skip when the
+      // address text already names the venue (would just duplicate it) or
+      // when the "label" is really a description, not a business name
+      // Google can look up (a tour meeting point, an unconfirmed pick).
+      const query =
+        label && !MAP_DINING_QUERY_SKIP_LABEL.has(leg.num) ? label + ", " + address : address;
       return { type: "search", url: googleMapsSearchUrl(query) };
     }
 
@@ -1252,9 +1273,14 @@
     const websiteHref = d.website ? (d.website.startsWith("http") ? d.website : "https://" + d.website) : "";
     const websiteLink = d.website ? `<a href="${websiteHref}" target="_blank" rel="noopener">${d.website}</a>` : "";
     // Only real candidates carry an address; placeholders like "Dinner —
-    // not yet chosen" have none, so they get no map link.
+    // not yet chosen" have none, so they get no map link. Lead with the
+    // venue name (unless the address text already names it) so Google
+    // Maps resolves to that business's own listing, not just a pin on
+    // the building -- see the same logic in mapLinkForLeg().
+    const diningQuery =
+      d.address && !d.address.toLowerCase().includes(d.name.toLowerCase()) ? d.name + ", " + d.address : d.address;
     const mapLink = d.address
-      ? `<a href="${googleMapsSearchUrl(d.address)}" target="_blank" rel="noopener">📍 View on Google Maps</a>`
+      ? `<a href="${googleMapsSearchUrl(diningQuery)}" target="_blank" rel="noopener">📍 View on Google Maps</a>`
       : "";
     const pinRef = d.address ? TRIP_MAP_POINTS.diningPinByAddress[d.address] : null;
     const mapViewHtml = pinRef ? `<button type="button" class="dining-map-view-btn">🗺️ Map view</button>` : "";
