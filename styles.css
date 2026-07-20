@@ -108,9 +108,27 @@ input:focus-visible {
   position: sticky;
   top: 0;
   z-index: 20;
-  background: linear-gradient(180deg, var(--bg) 70%, rgba(246,244,238,0.9));
-  padding: 14px 16px 10px;
+  background: var(--bg);
   border-bottom: 1px solid var(--line);
+}
+
+/* A real masthead rather than plain text blending into the page: solid
+   accent-colored band, centered. Its own padding-top absorbs the iPhone
+   status bar's safe area (time/cell/wifi icons) when installed as a
+   home-screen app -- browser tabs get env(safe-area-inset-top) = 0, so
+   this is a no-op there and the total header height is unchanged from
+   before. The dark background is also why apple-mobile-web-app-status-
+   bar-style is "black-translucent" in index.html: light status bar icons
+   read correctly against it. Kept to the same total padding as the old
+   .app-header so this doesn't grow the header's footprint. */
+.app-banner {
+  background: var(--accent);
+  /* Own padding trimmed ~10% from the original 14px/10px -- only our own
+     contribution, not the env() safe-area itself, which is a real OS-
+     measured value (the iPhone status bar / notch or Dynamic Island
+     exclusion zone) and shouldn't be shrunk without risking overlap. */
+  padding: calc(11px + env(safe-area-inset-top, 0px)) 16px 7px;
+  text-align: center;
 }
 
 .app-title {
@@ -118,15 +136,15 @@ input:focus-visible {
   font-weight: 700;
   font-size: 15px;
   letter-spacing: 0.02em;
-  color: var(--text);
+  color: #fff;
   margin: 0 0 2px;
 }
 
 .app-subtitle {
   font-family: var(--font-mono);
   font-size: 11px;
-  color: var(--text-dim);
-  margin: 0 0 12px;
+  color: rgba(255, 255, 255, 0.72);
+  margin: 0;
 }
 
 /* ---------- Day nav (arrows + jump sheet, all screen sizes) ---------- */
@@ -717,8 +735,14 @@ input:focus-visible {
   align-items: center;
   justify-content: center;
   gap: 3px;
-  min-height: 56px;
-  padding: 8px 4px;
+  /* min-height (not padding) is what actually governs this button's
+     height -- it's a flex column centered within that minimum, so
+     trimming padding alone wouldn't visibly shrink anything. This is the
+     real lever for the extra white space below the icon/label, on top of
+     env(safe-area-inset-bottom) below (the home-indicator exclusion zone,
+     left untouched -- that's a real OS measurement, not ours to shrink). */
+  min-height: 48px;
+  padding: 6px 4px 4px;
   font-size: 11px;
   font-family: var(--font-mono);
   color: var(--text-faint);

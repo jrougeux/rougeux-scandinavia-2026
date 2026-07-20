@@ -77,6 +77,20 @@ Defined as CSS custom properties in `styles.css` (`:root`):
 - Day navigation: large ‹/› arrows + a tappable label that opens a full
   "jump to day" sheet (grouped by city, flag per day) — same pattern on
   mobile and desktop, no separate dot-strip nav
+- The top masthead (`.app-banner` in `renderHeader()`) is a solid
+  `--accent`-colored band, centered, white text — not plain text on the
+  page background. Its own `padding-top` absorbs
+  `env(safe-area-inset-top)` (the iPhone status bar's time/cell/wifi
+  icons, relevant only when installed to the home screen as a standalone
+  app — a regular browser tab gets `env() = 0`, a no-op) so the total
+  header height doesn't change between the two. The dark background is
+  why `apple-mobile-web-app-status-bar-style` is `black-translucent` in
+  `index.html`: light status bar icons need a dark background under them
+  to read correctly, and this app is iPhone-only (no Android-specific
+  handling needed/present). The day-nav (arrows, "Day N of 16", progress
+  bar) stays outside `.app-banner`, on the header's normal light
+  background, unaffected by this — it's a separate functional element
+  that only appears on the Day view, not part of the masthead itself.
 - Logistics legs are color-coded by category (lodging, transport, walking,
   dining, activity, note) via a left border stripe + tinted chip + emoji;
   see `categorizeLeg()` in `app.js` — every leg gets exactly one category,
@@ -248,14 +262,33 @@ Defined as CSS custom properties in `styles.css` (`:root`):
   than a nested `<iframe>`'s own content when both are on screen and
   scrollable, which made the PDF feel clipped and unscrollable when it
   was rendered inside the normal `.tickets-view` card. Making the file the
-  only scrollable thing on screen removes that ambiguity. Pinch-zoom for
-  QR codes still works: the browser's native PDF viewer supports it inside
-  an iframe, and the two `.jpg` tickets get a scrollable
-  `.ticket-file-image-wrap` plus the page's own native pinch-zoom (the
-  viewport meta tag doesn't restrict scaling). A small "↗" link in the
-  header (the one place in this view that *does* use `target="_blank"`)
-  is kept as an escape hatch for saving/sharing a file, or as a fallback
-  if a particular browser's embedded PDF viewer still isn't behaving.
+  only scrollable thing on screen removes that ambiguity. PDFs render via
+  `<embed type="application/pdf">`, not `<iframe>` -- in an installed/
+  standalone PWA on iOS, WKWebView often gives an `<iframe>`-embedded PDF
+  only a stripped-down single-page preview instead of the full multi-page
+  viewer a real top-level navigation gets; `<embed>` fares better. The two
+  `.jpg` tickets get a scrollable `.ticket-file-image-wrap` plus the
+  page's own native pinch-zoom (the viewport meta tag doesn't restrict
+  scaling) for both. A small "↗" link in the header (the one place in
+  this view that *does* use `target="_blank"`) is kept as an escape hatch
+  for saving/sharing a file, or as a fallback if a browser's embedded PDF
+  rendering still isn't behaving -- multi-page PDFs reliably work when
+  opened this way even where `<embed>` still falls short.
+- `state.view` and `state.ticketsDayIndex` are persisted to localStorage
+  (`loadLastView()`/`saveLastView()`, `loadTicketsDayIndex()`/
+  `saveTicketsDayIndex()`, both saved from inside `render()` so every
+  state change is covered without having to remember to call them at each
+  call site), unlike the map/day-scroll persistence elsewhere in this app
+  which is deliberately in-memory-only. This one needs to survive a full
+  reload: in a standalone/home-screen PWA there's no browser chrome at
+  all, so once a real navigation leaves the app's document (e.g. the "↗"
+  link, or a browser/OS quirk sending the user somewhere they didn't
+  expect), the *only* way back is an OS-level gesture with no in-app
+  control over it -- if that reloads the app from scratch, it should land
+  back on the same tab and day's ticket list, not reset to Day view with
+  the bottom nav gone. `state.ticketFile` is deliberately NOT persisted --
+  a fresh load should always land on the ticket *list*, never try to
+  reopen a file automatically.
 
 ## Local development
 

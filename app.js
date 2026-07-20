@@ -34,7 +34,42 @@
     try { localStorage.setItem("rougeux_day_index", String(i)); } catch (e) {}
   }
 
+  const VALID_VIEWS = ["day", "map", "tickets", "search", "checklist"];
+  function loadLastView() {
+    try {
+      const v = localStorage.getItem("rougeux_view");
+      return VALID_VIEWS.includes(v) ? v : "day";
+    } catch (e) { return "day"; }
+  }
+  function saveLastView(v) {
+    try { localStorage.setItem("rougeux_view", v); } catch (e) {}
+  }
+
+  function loadTicketsDayIndex() {
+    try {
+      const v = localStorage.getItem("rougeux_tickets_day_index");
+      if (v === null) return null;
+      const n = Number(v);
+      return Number.isInteger(n) && n >= 0 && n < DAYS.length ? n : null;
+    } catch (e) { return null; }
+  }
+  function saveTicketsDayIndex(i) {
+    try {
+      if (i == null) localStorage.removeItem("rougeux_tickets_day_index");
+      else localStorage.setItem("rougeux_tickets_day_index", String(i));
+    } catch (e) {}
+  }
+
   state.dayIndex = loadLastDay();
+  // Persisted (not just in-memory) so that if the platform ever fully
+  // reloads the app -- e.g. returning via an OS-level back/swipe gesture
+  // from a real navigation, rather than the in-app "Back" button -- it
+  // lands back on the same tab and the same day's ticket list instead of
+  // resetting to the Day view with the bottom nav and everything else
+  // gone. state.ticketFile is deliberately NOT persisted: a fresh load
+  // should always land on the ticket *list*, never try to reopen a file.
+  state.view = loadLastView();
+  state.ticketsDayIndex = loadTicketsDayIndex();
 
   const root = document.getElementById("app");
 
@@ -46,6 +81,14 @@
   function fmtDateLabel(day) {
     const d = new Date(day.date + "T00:00:00");
     return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  }
+
+  // "Wed, Jul 29" -- used in trip-map popups instead of a bare "Day N",
+  // since a day number means nothing without opening the day-jump sheet
+  // to translate it, whereas a weekday+date is meaningful on its own.
+  function mapPopupDayLabel(dayIndex) {
+    const day = DAYS[dayIndex];
+    return `${day.weekday.slice(0, 3)}, ${fmtDateLabel(day)}`;
   }
 
   // ---------------- Day nav (arrows + jump sheet, all screen sizes) ----------------
@@ -1629,7 +1672,7 @@
       .forEach((v) => {
         const row = document.createElement("button");
         row.className = "tmp-goto tmp-visit";
-        row.innerHTML = `<span class="tmp-visit-day">Day ${v.dayNumber}${v.time ? " · " + v.time : ""}</span><span class="tmp-visit-label">${tripMapDotHtml(v.kind)}${v.label}</span>`;
+        row.innerHTML = `<span class="tmp-visit-day">${mapPopupDayLabel(v.dayIndex)}${v.time ? " · " + v.time : ""}</span><span class="tmp-visit-label">${tripMapDotHtml(v.kind)}${v.label}</span>`;
         row.addEventListener("click", () => goToDayFn(v.dayIndex, v.num));
         popupEl.appendChild(row);
       });
@@ -1948,7 +1991,7 @@
         const popupEl = document.createElement("div");
         popupEl.className = "trip-map-popup";
         popupEl.innerHTML = `
-          <div class="tmp-eyebrow">Day ${p.dayNumber}${p.time ? " · " + p.time : ""}</div>
+          <div class="tmp-eyebrow">${mapPopupDayLabel(p.dayIndex)}${p.time ? " · " + p.time : ""}</div>
           <div class="tmp-title">${tripMapDotHtml(p.kind)}${p.label}</div>
         `;
         const gotoBtn = document.createElement("button");
@@ -2236,11 +2279,15 @@
       wrap.appendChild(img);
       frame.appendChild(wrap);
     } else {
-      const iframe = document.createElement("iframe");
-      iframe.className = "ticket-file-pdf";
-      iframe.src = ticketFileUrl(t.filename);
-      iframe.title = t.description;
-      frame.appendChild(iframe);
+      // <embed> rather than <iframe> -- in an installed/standalone PWA on
+      // iOS, a PDF inside an <iframe> often only gets a stripped-down,
+      // single-page preview from WKWebView instead of the full multi-page
+      // viewer a real top-level navigation to the same PDF gets.
+      const embed = document.createElement("embed");
+      embed.className = "ticket-file-pdf";
+      embed.src = ticketFileUrl(t.filename);
+      embed.type = "application/pdf";
+      frame.appendChild(embed);
     }
     container.appendChild(frame);
 
@@ -2309,8 +2356,10 @@
     const header = document.createElement("div");
     header.className = "app-header";
     header.innerHTML = `
-      <p class="app-title">${DATA.meta.family_name} Family — ${DATA.meta.trip_title}</p>
-      <p class="app-subtitle">${DATA.meta.start_date} → ${DATA.meta.end_date}</p>
+      <div class="app-banner">
+        <p class="app-title">${DATA.meta.family_name} Family — ${DATA.meta.trip_title}</p>
+        <p class="app-subtitle">${DATA.meta.start_date} → ${DATA.meta.end_date}</p>
+      </div>
     `;
     if (state.view === "day") {
       header.appendChild(renderDayNav());
@@ -2359,6 +2408,8 @@
     if (lastRenderedView === "day" && state.view !== "day") {
       dayViewScrollY = window.scrollY;
     }
+    saveLastView(state.view);
+    saveTicketsDayIndex(state.ticketsDayIndex);
     teardownTripMap();
     root.innerHTML = "";
 
