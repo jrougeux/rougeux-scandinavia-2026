@@ -31,6 +31,18 @@ still dependency-free vanilla JS.
   `images/`), loaded in `index.html` before `app.js`. Powers only the
   trip-wide "Map" bottom-nav view; the per-day Map sections still use the
   hand-rolled canvas renderer and don't need it
+- `assets/tickets/` — PDF/JPG train tickets, taxi receipts, tour vouchers,
+  etc. Static site with no server, so there's no way to list this folder's
+  contents at runtime — `TICKET_FILES` in `app.js` is a hand-maintained
+  array of every filename in it, and **must be updated any time a file is
+  added, renamed, or removed here**. Each filename encodes its own date/
+  time: `DD-MM-YYYY[ H(H)-MM] Description.ext` (the time part is optional;
+  hour may be 1 or 2 digits, e.g. `8-34` or `14-23`) — see
+  `parseTicketFilename()`. Ticket PDFs are *not* in `sw.js`'s precached
+  `ASSETS` list (that would bloat the initial install by several MB); they
+  rely on the service worker's fetch handler opportunistically caching
+  whatever's actually been fetched, so a ticket is only available offline
+  after it's been viewed at least once with a connection.
 
 ## Data shape
 
@@ -214,6 +226,36 @@ Defined as CSS custom properties in `styles.css` (`:root`):
   `collapseForSearch()` guards against an empty result (e.g. a query of
   just "-" collapses to "") since `"x".includes("")` is always true and
   would otherwise match every entry.
+- Bottom nav has a "Tickets" view: a list of all 16 days (with a ticket
+  count badge, `state.ticketsDayIndex = null`), and tapping one shows that
+  day's tickets as one-per-row thumbnails (`state.ticketsDayIndex = <day
+  index>`) — `"Description - H:MM AM/PM"`, or just `"Description"` when
+  the filename has no time, sorted with no-time tickets first, then
+  chronologically. See `assets/tickets/` above for the file-naming
+  contract this all depends on.
+- Tapping a ticket thumbnail opens the PDF/JPG *inline*, not via a real
+  navigation (`state.ticketFile = <ticket>`, `renderTicketFileView()`) --
+  a plain `<a href="...pdf">` was tried first but a same-tab navigation to
+  a PDF doesn't reliably get bfcached, so hitting the phone's back button
+  to return reset the whole app to its default state (Day view, styling
+  broken) instead of restoring the ticket list. There's an explicit
+  in-app "‹ Back" button instead of relying on the browser back button.
+- The file viewer is a full-screen takeover handled directly in `render()`
+  (no header, no bottom-nav, `document.body.style.overflow = "hidden"` --
+  same pattern as the day-jump sheet's overlay), not a card embedded in
+  the normal scrolling page. This isn't just visual: on mobile, a
+  single-finger touch drag defaults to scrolling the *outer* page rather
+  than a nested `<iframe>`'s own content when both are on screen and
+  scrollable, which made the PDF feel clipped and unscrollable when it
+  was rendered inside the normal `.tickets-view` card. Making the file the
+  only scrollable thing on screen removes that ambiguity. Pinch-zoom for
+  QR codes still works: the browser's native PDF viewer supports it inside
+  an iframe, and the two `.jpg` tickets get a scrollable
+  `.ticket-file-image-wrap` plus the page's own native pinch-zoom (the
+  viewport meta tag doesn't restrict scaling). A small "↗" link in the
+  header (the one place in this view that *does* use `target="_blank"`)
+  is kept as an escape hatch for saving/sharing a file, or as a fallback
+  if a particular browser's embedded PDF viewer still isn't behaving.
 
 ## Local development
 

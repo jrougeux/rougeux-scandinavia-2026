@@ -910,6 +910,192 @@ input:focus-visible {
 .search-result .match-detail { font-size: 13px; color: var(--text-dim); line-height: 1.45; }
 .empty-note { color: var(--text-faint); font-size: 13px; padding: 20px 4px; text-align: center; }
 
+/* ---------- Tickets view ---------- */
+.tickets-view { padding: 16px; max-width: 640px; margin: 0 auto; }
+
+.tickets-day-list {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--surface);
+}
+.tickets-day-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 12px 16px;
+  min-height: 52px;
+  box-sizing: border-box;
+  text-align: left;
+  border-bottom: 1px solid var(--line);
+  touch-action: manipulation;
+}
+.tickets-day-row:last-child { border-bottom: none; }
+.tickets-day-row:active { background: var(--surface-2); }
+.tickets-day-row .tdr-flag { font-size: 15px; flex: 0 0 auto; }
+.tickets-day-row .tdr-num {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-faint);
+  width: 20px;
+  flex: 0 0 auto;
+}
+.tickets-day-row .tdr-body {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.tickets-day-row .tdr-date {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-faint);
+}
+.tickets-day-row .tdr-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tickets-day-row .tdr-count {
+  flex: 0 0 auto;
+  min-width: 22px;
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-dim);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  padding: 2px 7px;
+}
+
+.tickets-back {
+  display: inline-block;
+  margin-bottom: 12px;
+  padding: 8px 4px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--accent);
+  touch-action: manipulation;
+}
+.tickets-back:active { opacity: 0.6; }
+
+.ticket-list {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--surface);
+}
+.ticket-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 14px 16px;
+  min-height: 52px;
+  box-sizing: border-box;
+  border: none;
+  border-bottom: 1px solid var(--line);
+  background: none;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.ticket-row:last-child { border-bottom: none; }
+.ticket-row:active { background: var(--surface-2); }
+.ticket-row .ticket-icon { font-size: 18px; flex: 0 0 auto; }
+.ticket-row .ticket-label { font-size: 14.5px; font-weight: 600; line-height: 1.4; }
+
+/* Full-screen takeover (see render()) -- deliberately the *only* scrollable
+   thing on screen while a ticket file is open, since a touch drag on
+   mobile defaults to scrolling the outer page instead of a nested iframe
+   when both are present, which made the file feel clipped/unscrollable. */
+.ticket-file-view {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  padding-top: env(safe-area-inset-top, 0);
+  padding-bottom: env(safe-area-inset-bottom, 0);
+}
+.ticket-file-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+  flex: 0 0 auto;
+}
+.ticket-file-back {
+  flex: 0 0 auto;
+  padding: 8px 6px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--accent);
+  touch-action: manipulation;
+}
+.ticket-file-back:active { opacity: 0.6; }
+.ticket-file-label {
+  flex: 1;
+  min-width: 0;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ticket-file-openlink {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  font-size: 16px;
+  color: var(--accent);
+  text-decoration: none;
+  touch-action: manipulation;
+}
+.ticket-file-openlink:active { opacity: 0.6; }
+
+/* Fills all remaining space below the header -- the file itself, not a
+   padded card around it, so there's no ambiguity about what a touch
+   gesture is meant to scroll/pan/zoom. */
+.ticket-file-frame {
+  flex: 1;
+  min-height: 0;
+  background: var(--surface-2);
+}
+.ticket-file-pdf {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: none;
+}
+.ticket-file-image-wrap {
+  width: 100%;
+  height: 100%;
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.ticket-file-image {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
 /* ---------- Checklist view ---------- */
 .checklist-view { padding: 16px; max-width: 640px; margin: 0 auto; }
 .checklist-item {

@@ -4,9 +4,11 @@
   const LODGING = DATA.lodging;
 
   const state = {
-    view: "day",       // "day" | "map" | "search" | "checklist"
+    view: "day",       // "day" | "map" | "search" | "checklist" | "tickets"
     dayIndex: 0,
-    checks: loadChecks()
+    checks: loadChecks(),
+    ticketsDayIndex: null, // null = day list; a DAYS index = that day's ticket thumbnails
+    ticketFile: null // non-null = viewing this ticket's file inline; see renderTicketFileView()
   };
 
   function loadChecks() {
@@ -2000,6 +2002,251 @@
     return container;
   }
 
+  // ---------------- Tickets view ----------------
+  // Static site, no server -- there's no way to list assets/tickets/ at
+  // runtime, so the file list is hand-maintained here. Each filename
+  // encodes its own date/time: "DD-MM-YYYY[ H(H)-MM] Description.ext"
+  // (time is optional; hour may be 1 or 2 digits, e.g. "8-34" or "14-23").
+  const TICKET_FILES = [
+  "01-08-2026 14-23 Oslo S - Voss.pdf",
+  "01-08-2026 Taxi VossTaxi Booking.pdf",
+  "02-08-2026 07-50 Taxi VossTaxi Booking.pdf",
+  "02-08-2026 08-25 Voss - Mydral.pdf",
+  "02-08-2026 09-30 Mydral - Flam.pdf",
+  "02-08-2026 12-00 Nærøyfjord cruise Flåm → Gudvangen Ticket.pdf",
+  "02-08-2026 12-00 Nærøyfjord cruise Flåm → Gudvangen.pdf",
+  "02-08-2026 15-15 Flam Gudvangen Shuttle single ticket.pdf",
+  "02-08-2026 15-15 Flam Gudvangen Shuttle tickets.pdf",
+  "02-08-2026 15-15 Gudvangen - Flam Shuttle.pdf",
+  "02-08-2026 16-00 Flam - Mydral.pdf",
+  "02-08-2026 17-04 Mydral - Voss.pdf",
+  "03-08-2026 12-05 Voss - Bergen.pdf",
+  "04-08-2026 Fløibanen funicular.pdf",
+  "06-08-2026 04-30 Bergen Airport Taxi Receipt.pdf",
+  "23-07-2026 15-35 Taxi Stockholm - Arlanda to Stockholm.pdf",
+  "24-07-2026 14-00 Nordic Walking Tour.pdf",
+  "25-07-2026 Skansen Voucher Feb 7 2026.pdf",
+  "26-07-2026 09-45 Stromma Cruise details.pdf",
+  "26-07-2026 09-45 Stromma Cruise.pdf",
+  "27-07-2026 07-41 Stockholm C - Mora.pdf",
+  "27-07-2026 11-00 Taxi Stockholm - Munkbron 15 Stockholm to Stockholm Centralstation v2.pdf",
+  "28-07-2026 13-23 Mora resecentrum to Granasgatu Nusnäs.jpg",
+  "28-07-2026 16-12 Granasgatu Nusnäs to Mora resecentrum.jpg",
+  "28-07-2026 Nils Olsson.pdf",
+  "29-07-2026 13-05 Mora - Karlstad Central.pdf",
+  "30-07-2026 8-34 Karlstad Central – Oslo S.pdf"
+];
+
+  function parseTicketFilename(filename) {
+    const m = filename.match(/^(\d{2})-(\d{2})-(\d{4})(?:\s+(\d{1,2})-(\d{2}))?\s+(.+)\.(pdf|jpe?g)$/i);
+    if (!m) return null;
+    const [, dd, mm, yyyy, hh, min, description, ext] = m;
+    return {
+      filename,
+      date: `${yyyy}-${mm}-${dd}`,
+      time24: hh != null ? `${hh.padStart(2, "0")}:${min}` : null,
+      description,
+      ext: ext.toLowerCase()
+    };
+  }
+
+  function formatTicketTime(time24) {
+    const [hStr, min] = time24.split(":");
+    const h = parseInt(hStr, 10);
+    const period = h >= 12 ? "PM" : "AM";
+    let h12 = h % 12;
+    if (h12 === 0) h12 = 12;
+    return `${h12}:${min} ${period}`;
+  }
+
+  // Grouped by ISO date (matches day.date), each day's tickets sorted with
+  // no-time tickets first, then chronologically by time.
+  const TICKETS_BY_DATE = {};
+  TICKET_FILES.forEach((filename) => {
+    const t = parseTicketFilename(filename);
+    if (!t) return; // a filename that doesn't match the naming convention
+    if (!TICKETS_BY_DATE[t.date]) TICKETS_BY_DATE[t.date] = [];
+    TICKETS_BY_DATE[t.date].push(t);
+  });
+  Object.values(TICKETS_BY_DATE).forEach((tickets) => {
+    tickets.sort((a, b) => {
+      if (!!a.time24 !== !!b.time24) return a.time24 ? 1 : -1;
+      if (a.time24 && b.time24) return a.time24.localeCompare(b.time24);
+      return 0;
+    });
+  });
+
+  function ticketFileUrl(filename) {
+    return "assets/tickets/" + encodeURIComponent(filename);
+  }
+
+  function renderTicketsView() {
+    // state.ticketFile is handled directly in render() as a full-screen
+    // takeover, so this only ever needs to pick between the two list
+    // levels.
+    return state.ticketsDayIndex == null ? renderTicketsDayList() : renderTicketsDayDetail(state.ticketsDayIndex);
+  }
+
+  function renderTicketsDayList() {
+    const container = document.createElement("div");
+    container.className = "tickets-view";
+
+    const label = document.createElement("div");
+    label.className = "section-label";
+    label.textContent = "Tickets by day";
+    container.appendChild(label);
+
+    const list = document.createElement("div");
+    list.className = "tickets-day-list";
+    DAYS.forEach((day, i) => {
+      const tickets = TICKETS_BY_DATE[day.date] || [];
+      const row = document.createElement("button");
+      row.className = "tickets-day-row";
+      const title = day.title.split("—").slice(1).join("—").trim() || day.title;
+      row.innerHTML = `
+        <span class="tdr-flag" aria-hidden="true">${countryFlag(day.day_number)}</span>
+        <span class="tdr-num">${day.day_number}</span>
+        <span class="tdr-body">
+          <span class="tdr-date">${day.weekday}, ${fmtDateLabel(day)}</span>
+          <span class="tdr-title">${title}</span>
+        </span>
+        <span class="tdr-count">${tickets.length ? tickets.length : "–"}</span>
+      `;
+      row.addEventListener("click", () => {
+        state.ticketsDayIndex = i;
+        render();
+        window.scrollTo(0, 0);
+      });
+      list.appendChild(row);
+    });
+    container.appendChild(list);
+    return container;
+  }
+
+  function renderTicketsDayDetail(dayIndex) {
+    const day = DAYS[dayIndex];
+    const container = document.createElement("div");
+    container.className = "tickets-view";
+
+    const backBtn = document.createElement("button");
+    backBtn.className = "tickets-back";
+    backBtn.textContent = "‹ All days";
+    backBtn.addEventListener("click", () => {
+      state.ticketsDayIndex = null;
+      render();
+      window.scrollTo(0, 0);
+    });
+    container.appendChild(backBtn);
+
+    const head = document.createElement("div");
+    head.className = "day-head";
+    head.innerHTML = `
+      <p class="day-eyebrow">Day ${day.day_number} of ${DAYS.length} · ${day.weekday}, ${fmtDateLabel(day)}</p>
+      <h1 class="day-title">${day.title.split("—").slice(1).join("—").trim() || day.title}</h1>
+    `;
+    container.appendChild(head);
+
+    const tickets = TICKETS_BY_DATE[day.date] || [];
+    if (!tickets.length) {
+      const note = document.createElement("div");
+      note.className = "empty-note";
+      note.textContent = "No tickets for this day.";
+      container.appendChild(note);
+      return container;
+    }
+
+    const list = document.createElement("div");
+    list.className = "ticket-list";
+    tickets.forEach((t) => {
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "ticket-row";
+      const icon = t.ext === "jpg" || t.ext === "jpeg" ? "🖼️" : "📄";
+      const label = t.time24 ? `${t.description} - ${formatTicketTime(t.time24)}` : t.description;
+      row.innerHTML = `<span class="ticket-icon">${icon}</span><span class="ticket-label">${label}</span>`;
+      row.addEventListener("click", () => {
+        state.ticketFile = t;
+        render();
+        window.scrollTo(0, 0);
+      });
+      list.appendChild(row);
+    });
+    container.appendChild(list);
+    return container;
+  }
+
+  // Shown inline within the app (not a real navigation) so there's no
+  // browser-back/history confusion, and app.js/styles.css never unload --
+  // a plain <a href="...pdf"> navigating away was losing all in-app state
+  // and even visual styling when the user hit back to return. PDFs render
+  // via an <iframe> (the browser's native PDF viewer still supports
+  // pinch-zoom inside it); the two .jpg tickets via a plain <img>, relying
+  // on the page's own native pinch-zoom (the viewport meta tag doesn't
+  // restrict scaling).
+  function renderTicketFileView(t) {
+    const container = document.createElement("div");
+    container.className = "ticket-file-view";
+
+    const header = document.createElement("div");
+    header.className = "ticket-file-header";
+
+    const backBtn = document.createElement("button");
+    backBtn.type = "button";
+    backBtn.className = "ticket-file-back";
+    backBtn.textContent = "‹ Back";
+    backBtn.setAttribute("aria-label", "Back to tickets");
+    backBtn.addEventListener("click", () => {
+      state.ticketFile = null;
+      render();
+    });
+    header.appendChild(backBtn);
+
+    const label = document.createElement("div");
+    label.className = "ticket-file-label";
+    label.textContent = t.time24 ? `${t.description} - ${formatTicketTime(t.time24)}` : t.description;
+    header.appendChild(label);
+
+    const openLink = document.createElement("a");
+    openLink.className = "ticket-file-openlink";
+    openLink.href = ticketFileUrl(t.filename);
+    openLink.target = "_blank";
+    openLink.rel = "noopener";
+    openLink.textContent = "↗";
+    openLink.setAttribute("aria-label", "Open in new tab");
+    header.appendChild(openLink);
+
+    container.appendChild(header);
+
+    // The frame fills all remaining screen space (flex: 1 in the CSS) so
+    // the file itself -- not the surrounding chrome -- is what a touch
+    // drag lands on.
+    const frame = document.createElement("div");
+    frame.className = "ticket-file-frame";
+    if (t.ext === "jpg" || t.ext === "jpeg") {
+      // A scrollable wrapper (rather than the image alone) so a tall/wide
+      // image can be panned by dragging even before zooming in; native
+      // pinch-zoom (the viewport meta tag doesn't restrict scaling) layers
+      // on top of that for reading small text/QR codes.
+      const wrap = document.createElement("div");
+      wrap.className = "ticket-file-image-wrap";
+      const img = document.createElement("img");
+      img.className = "ticket-file-image";
+      img.src = ticketFileUrl(t.filename);
+      img.alt = t.description;
+      wrap.appendChild(img);
+      frame.appendChild(wrap);
+    } else {
+      const iframe = document.createElement("iframe");
+      iframe.className = "ticket-file-pdf";
+      iframe.src = ticketFileUrl(t.filename);
+      iframe.title = t.description;
+      frame.appendChild(iframe);
+    }
+    container.appendChild(frame);
+
+    return container;
+  }
+
   // ---------------- Checklist view ----------------
   function renderChecklistView() {
     const container = document.createElement("div");
@@ -2077,6 +2324,7 @@
     const items = [
       { key: "day", icon: "🗓️", label: "Day" },
       { key: "map", icon: "🗺️", label: "Map" },
+      { key: "tickets", icon: "🎫", label: "Tickets" },
       { key: "search", icon: "🔍", label: "Search" },
       { key: "checklist", icon: "✓", label: "Checklist" }
     ];
@@ -2113,10 +2361,28 @@
     }
     teardownTripMap();
     root.innerHTML = "";
+
+    // Viewing a ticket file is a full-screen takeover -- no header or
+    // bottom-nav, and the page itself can't scroll (matches the day-jump
+    // sheet's overlay pattern). On mobile, a single-finger touch drag
+    // defaults to scrolling whatever's the *outer* page rather than a
+    // nested iframe/image, so anything else visibly on screen competes
+    // for that gesture and the file ends up feeling clipped/unscrollable.
+    // Making the file viewer the only thing on screen removes that
+    // ambiguity entirely.
+    if (state.view === "tickets" && state.ticketFile) {
+      document.body.style.overflow = "hidden";
+      root.appendChild(renderTicketFileView(state.ticketFile));
+      lastRenderedView = state.view;
+      return;
+    }
+    document.body.style.overflow = "";
+
     root.appendChild(renderHeader());
     let view;
     if (state.view === "day") view = renderDayView();
     else if (state.view === "map") view = renderTripMapView();
+    else if (state.view === "tickets") view = renderTicketsView();
     else if (state.view === "search") view = renderSearchView();
     else view = renderChecklistView();
     root.appendChild(view);
