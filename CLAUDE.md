@@ -11,15 +11,32 @@ still dependency-free vanilla JS.
 
 ## Files
 
-- `index.html` — entry point, loads data.js then app.js
+- `index.html` — entry point, loads data.js, poi_data.js, then app.js
 - `data.js` — the entire trip dataset as `window.TRIP_DATA`, generated from
   `Rougeux_Scandinavia_Master.json` (see "Regenerating data" below)
+- `poi_data.js` — a companion dataset, `window.POI_DATA`: 51 points-of-interest
+  entries powering the "Wiki" bottom-nav view (directory + detail pages) and
+  the map's yellow "Point of Interest" pins. Generated the same way as
+  `data.js` — mechanically wrapped from a source JSON
+  (`points_of_interest.json`, also in the repo root) via
+  `'window.POI_DATA = ' + JSON.stringify(data, null, 0)` (with
+  `ensure_ascii=False` if regenerating from Python, so diacritics stay as
+  literal UTF-8 rather than escape sequences). Each entry has: `id` (a
+  lowercase/underscore slug, used as the Wiki detail-view key and the
+  `"poi:" + id` map-pin key), `name`, `category`, `country`,
+  `coordinates.{lat,lng}`, `tier`, `related_days[]`, `summary`, `content`
+  (long-form essay, may contain literal `**bold**`/`*italic*` markdown
+  syntax — see `mdLiteToHtml()` in `app.js`), `fun_fact`, `sources[]`.
+  **POI content is deliberately Wiki/Map-only — it must never appear in the
+  Day view** (Logistics list, Dining options, story/reminders); it's an
+  independent, separately-sourced dataset, not part of the day-by-day
+  logistics plan
 - `app.js` — all rendering/routing logic, vanilla JS, no framework
 - `styles.css` — design system (CSS custom properties at the top of the file)
 - `manifest.json` + `sw.js` — PWA manifest and service worker for offline/
   "Add to Home Screen" support. `sw.js` caches assets cache-first under
   `CACHE_NAME`. **Bump `CACHE_NAME` (e.g. v7 → v8) any time app.js/styles.css/
-  data.js/index.html change** — otherwise the browser won't detect `sw.js`
+  data.js/poi_data.js/index.html change** — otherwise the browser won't detect `sw.js`
   as changed, won't install a new service worker, and silently keeps
   serving the old cached files even after a normal reload (a hard
   refresh / cache clear is needed to recover without a version bump)
@@ -289,6 +306,53 @@ Defined as CSS custom properties in `styles.css` (`:root`):
   the bottom nav gone. `state.ticketFile` is deliberately NOT persisted --
   a fresh load should always land on the ticket *list*, never try to
   reopen a file automatically.
+- Bottom nav's 5th and final section is "Wiki": an alphabetically-sorted
+  (`localeCompare`) directory of all 51 `POI_DATA` entries with live search
+  (`renderWikiView()`/`renderWikiDirectory()`/`renderWikiEntryView()` in
+  `app.js`). Tapping an entry opens a detail view: eyebrow (category ·
+  country), title, a "🗺️ View on map" button (via `goToMapPin()`, same
+  mechanism leg/dining map links use), the `content` essay run through
+  `mdLiteToHtml()`, a `fun_fact` callout box, and a sources line.
+  `POI_LIST`/`POI_BY_ID` are defined near the *top* of `app.js` (immediately
+  after `LODGING`), not down in the Wiki section itself, because
+  `buildTripMapPoints()` needs them and runs early via
+  `const TRIP_MAP_POINTS = buildTripMapPoints()` — as `const`s (unlike
+  `function`s) they aren't hoisted, so they must be defined before that
+  call site textually.
+- Wiki search reuses the same `normalizeForSearch()`/`collapseForSearch()`
+  diacritic/spacing-insensitive utilities as the main Search tab, but with
+  a deliberately *wider* scope: it indexes name, category, summary,
+  fun_fact, **and the full long-form `content` essay** (`POI_SEARCH_INDEX`
+  in `app.js`), unlike Day/Dining search which only covers short
+  metadata-length fields. This is intentional — a Wiki search for e.g.
+  "viking" should surface entries that discuss Vikings in the essay body
+  even if the word isn't in the entry's title or summary.
+- Every POI also gets a pin on the trip-wide map, as a new "Point of
+  Interest" category — always, regardless of `tier`/`category`, and with
+  no dedup against existing lodging/activity/dining/hub pins even when a
+  POI describes the same real-world place as one of them (POIs are an
+  independently-sourced dataset, not a merge target; see `poiPoints` in
+  `buildTripMapPoints()`). These pins are colored **yellow**
+  (`categoryMapColor()`'s `poi: "#f3bf16"` entry in `app.js`) — a
+  deliberate, explicitly-requested exception to the "`--amber` reserved
+  for flags/warnings/focus rings only" rule below, scoped *only* to this
+  map-pin color and never used in the Logistics list's leg-category
+  system. POI pins are zoom-gated like other detail/hub pins (hidden until
+  `TRIP_MAP_DETAIL_MIN_ZOOM`), and their popup shows the entry's name,
+  category, and a "Learn more →" button that jumps into that Wiki entry's
+  detail view (setting `state.view = "wiki"` and `state.wikiEntryId`).
+- Point-of-interest content is intentionally **Wiki- and Map-only** — it
+  never appears in the Day view (Logistics list, Dining options, story/
+  reminders). This was an explicit product decision, not an oversight: the
+  POI dataset is independently sourced and not tied to specific logistics
+  legs the way `dining[]`/`story[]` are.
+- `state.wikiEntryId` (`null` = directory, else a POI id) persists across
+  navigation via localStorage (`loadWikiEntryId()`/`saveWikiEntryId()`),
+  same pattern as `state.ticketsDayIndex` — saved from inside `render()`
+  so every state change is covered. The map's pan/zoom/open-popup state
+  (`tripMapPersisted`) already covered POI pins for free once they were
+  added to `buildTripMapPoints()`'s output, since that persistence is
+  keyed generically by pin key, not by pin kind.
 
 ## Local development
 

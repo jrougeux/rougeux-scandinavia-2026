@@ -1,10 +1,11 @@
-const CACHE_NAME = "rougeux-trip-v32";
+const CACHE_NAME = "rougeux-trip-v36";
 const ASSETS = [
   "./",
   "./index.html",
   "./styles.css",
   "./app.js",
   "./data.js",
+  "./poi_data.js",
   "./manifest.json",
   "./icons/icon-192.png",
   "./icons/icon-512.png",

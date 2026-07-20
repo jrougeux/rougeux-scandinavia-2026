@@ -3,12 +3,24 @@
   const DAYS = DATA.days;
   const LODGING = DATA.lodging;
 
+  // Wiki (points of interest) -- a companion dataset to TRIP_DATA, loaded
+  // from poi_data.js as window.POI_DATA. Defined here (not down in the
+  // "Wiki view" section below) because buildTripMapPoints() needs
+  // POI_LIST for the map's "Point of Interest" pins, and that function
+  // runs near the top of the file.
+  const POI_LIST = (window.POI_DATA || []).slice().sort((a, b) => a.name.localeCompare(b.name));
+  const POI_BY_ID = {};
+  POI_LIST.forEach((p) => {
+    POI_BY_ID[p.id] = p;
+  });
+
   const state = {
-    view: "day",       // "day" | "map" | "search" | "checklist" | "tickets"
+    view: "day",       // "day" | "map" | "wiki" | "tickets" | "search" | "checklist"
     dayIndex: 0,
     checks: loadChecks(),
     ticketsDayIndex: null, // null = day list; a DAYS index = that day's ticket thumbnails
-    ticketFile: null // non-null = viewing this ticket's file inline; see renderTicketFileView()
+    ticketFile: null, // non-null = viewing this ticket's file inline; see renderTicketFileView()
+    wikiEntryId: null // null = directory; a POI id = that entry's detail view
   };
 
   function loadChecks() {
@@ -34,7 +46,7 @@
     try { localStorage.setItem("rougeux_day_index", String(i)); } catch (e) {}
   }
 
-  const VALID_VIEWS = ["day", "map", "tickets", "search", "checklist"];
+  const VALID_VIEWS = ["day", "map", "wiki", "tickets", "search", "checklist"];
   function loadLastView() {
     try {
       const v = localStorage.getItem("rougeux_view");
@@ -60,6 +72,19 @@
     } catch (e) {}
   }
 
+  function loadWikiEntryId() {
+    try {
+      const v = localStorage.getItem("rougeux_wiki_entry_id");
+      return v && POI_BY_ID[v] ? v : null;
+    } catch (e) { return null; }
+  }
+  function saveWikiEntryId(id) {
+    try {
+      if (id == null) localStorage.removeItem("rougeux_wiki_entry_id");
+      else localStorage.setItem("rougeux_wiki_entry_id", id);
+    } catch (e) {}
+  }
+
   state.dayIndex = loadLastDay();
   // Persisted (not just in-memory) so that if the platform ever fully
   // reloads the app -- e.g. returning via an OS-level back/swipe gesture
@@ -70,6 +95,7 @@
   // should always land on the ticket *list*, never try to reopen a file.
   state.view = loadLastView();
   state.ticketsDayIndex = loadTicketsDayIndex();
+  state.wikiEntryId = loadWikiEntryId();
 
   const root = document.getElementById("app");
 
@@ -1525,7 +1551,7 @@
         const raw = [leg.activity, leg.detail, leg.mode].filter(Boolean).join(" ");
         idx.push({
           dayIndex: DAYS.indexOf(day),
-          dayLabel: `Day ${day.day_number} · ${fmtDateLabel(day)}`,
+          dayLabel: `Day ${day.day_number} · ${mapPopupDayLabel(DAYS.indexOf(day))}`,
           title: leg.activity,
           detail: [leg.mode, leg.detail].filter(Boolean).join(" — "),
           haystack: normalizeForSearch(raw),
@@ -1537,7 +1563,7 @@
         const raw = [d.name, d.meal, d.address, d.description].filter(Boolean).join(" ");
         idx.push({
           dayIndex: DAYS.indexOf(day),
-          dayLabel: `Day ${day.day_number} · ${fmtDateLabel(day)}`,
+          dayLabel: `Day ${day.day_number} · ${mapPopupDayLabel(DAYS.indexOf(day))}`,
           title: d.name + (d.leading ? " ★" : ""),
           detail: [d.meal, d.address, d.description].filter(Boolean).join(" — "),
           haystack: normalizeForSearch(raw),
@@ -1656,7 +1682,12 @@
       dining: "#b43622",
       "dining-suggested": "#e75586",
       lodging: "#2f57c6",
-      transport: "#1d9a81"
+      transport: "#1d9a81",
+      // Deliberate exception to --amber being "reserved for flags/warnings
+      // only" elsewhere in the app -- explicitly requested as yellow, map
+      // pins only, not used anywhere in the Logistics list's category
+      // system.
+      poi: "#f3bf16"
     };
     return colors[kind] || "#35576b";
   }
@@ -1872,7 +1903,26 @@
       }
     });
 
-    return { cityPoints, detailPoints, hubPoints, legPinIndex, diningPinByAddress };
+    // Wiki points of interest -- independent of the legs/days/hub system
+    // above (a POI isn't tied to a specific leg), so no merge/dedup with
+    // existing pins: even where a POI and an existing activity/dining pin
+    // represent the same real-world place, they're independently sourced
+    // and get their own pin. One pin per POI, always.
+    const poiPoints = POI_LIST.map((p) => ({
+      lat: p.coordinates.lat,
+      lon: p.coordinates.lng,
+      kind: "poi",
+      id: p.id,
+      name: p.name,
+      category: p.category,
+      key: "poi:" + p.id
+    }));
+    const poiPinById = {};
+    poiPoints.forEach((p) => {
+      poiPinById[p.id] = { key: p.key, lat: p.lat, lon: p.lon };
+    });
+
+    return { cityPoints, detailPoints, hubPoints, poiPoints, legPinIndex, diningPinByAddress, poiPinById };
   }
 
   // Computed once -- the underlying trip data never changes at runtime, so
@@ -1880,7 +1930,7 @@
   // this rather than rebuilding it on every render.
   const TRIP_MAP_POINTS = buildTripMapPoints();
 
-  const TRIP_MAP_DETAIL_MIN_ZOOM = 8;
+  const TRIP_MAP_DETAIL_MIN_ZOOM = 6;
 
   // Straight-line distance in km (haversine) -- used to find which
   // activity/dining/hub pins "belong" to a city for the zoom-in bounds
@@ -1917,6 +1967,7 @@
       <span class="tml-item"><span class="tml-dot" style="background:${categoryMapColor("dining")}"></span>Dining (confirmed)</span>
       <span class="tml-item"><span class="tml-dot" style="background:${categoryMapColor("dining-suggested")}"></span>Dining (suggested)</span>
       <span class="tml-item"><span class="tml-dot" style="background:${categoryMapColor("transport")}"></span>Station / stop</span>
+      <span class="tml-item"><span class="tml-dot" style="background:${categoryMapColor("poi")}"></span>Point of interest</span>
     `;
     container.appendChild(legend);
 
@@ -1935,7 +1986,7 @@
         attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors'
       }).addTo(map);
 
-      const { cityPoints, detailPoints, hubPoints } = TRIP_MAP_POINTS;
+      const { cityPoints, detailPoints, hubPoints, poiPoints } = TRIP_MAP_POINTS;
 
       // Track every marker by its stable key so a saved popup can be
       // reopened after a rebuild, and so we know which pin's popup is
@@ -2020,9 +2071,38 @@
         hubLayer.addLayer(marker);
       });
 
+      const poiLayer = L.layerGroup();
+      poiPoints.forEach((p) => {
+        const marker = L.marker([p.lat, p.lon], { icon: makeTripMapIcon("poi", 16) });
+        const popupEl = document.createElement("div");
+        popupEl.className = "trip-map-popup";
+        const title = document.createElement("div");
+        title.className = "tmp-title";
+        title.innerHTML = tripMapDotHtml("poi") + p.name;
+        popupEl.appendChild(title);
+        const sub = document.createElement("div");
+        sub.className = "tmp-sub";
+        sub.textContent = p.category;
+        popupEl.appendChild(sub);
+        const learnBtn = document.createElement("button");
+        learnBtn.type = "button";
+        learnBtn.className = "tmp-goto";
+        learnBtn.textContent = "Learn more →";
+        learnBtn.addEventListener("click", () => {
+          state.view = "wiki";
+          state.wikiEntryId = p.id;
+          render();
+          window.scrollTo(0, 0);
+        });
+        popupEl.appendChild(learnBtn);
+        marker.bindPopup(popupEl);
+        trackMarker(marker, p.key);
+        poiLayer.addLayer(marker);
+      });
+
       function updateDetailVisibility() {
         const shouldShow = map.getZoom() >= TRIP_MAP_DETAIL_MIN_ZOOM;
-        [detailLayer, hubLayer].forEach((layer) => {
+        [detailLayer, hubLayer, poiLayer].forEach((layer) => {
           const isShown = map.hasLayer(layer);
           if (shouldShow && !isShown) layer.addTo(map);
           else if (!shouldShow && isShown) map.removeLayer(layer);
@@ -2294,6 +2374,167 @@
     return container;
   }
 
+  // ---------------- Wiki (points of interest) ----------------
+  // POI_LIST/POI_BY_ID are defined near the top of the file (see comment
+  // there) since buildTripMapPoints() needs them earlier than this section
+  // runs.
+
+  // Minimal markdown -> HTML: content/summary/fun_fact carry literal
+  // **bold**/*italic* markdown syntax in some entries (per the data's own
+  // documentation) rather than real formatting. HTML-escape first (this is
+  // long-form prose, not curated tag-free text like the rest of the app's
+  // data -- a stray "<" or "&" in an entry needs to render literally, not
+  // break the markup), then convert just bold/italic and paragraph breaks.
+  function mdLiteToHtml(text) {
+    const escaped = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    const emphasized = escaped
+      .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+      .replace(/\*([^*]+)\*/g, "<em>$1</em>");
+    return emphasized
+      .split(/\n\s*\n/)
+      .map((para) => `<p>${para.trim().replace(/\n/g, "<br>")}</p>`)
+      .join("");
+  }
+
+  // Indexes name/category/summary/fun_fact *and* the full long-form
+  // content essay -- broader recall than the Day/Dining search (which
+  // deliberately skips full-length text), so e.g. searching "viking"
+  // surfaces entries that discuss Vikings even if it's not in their title
+  // or summary.
+  const POI_SEARCH_INDEX = POI_LIST.map((p) => {
+    const raw = [p.name, p.category, p.summary, p.fun_fact, p.content].filter(Boolean).join(" ");
+    return { poi: p, haystack: normalizeForSearch(raw), haystackCollapsed: collapseForSearch(raw) };
+  });
+
+  function renderWikiView() {
+    if (state.wikiEntryId) {
+      const poi = POI_BY_ID[state.wikiEntryId];
+      if (poi) return renderWikiEntryView(poi);
+    }
+    return renderWikiDirectory();
+  }
+
+  function renderWikiDirectory() {
+    const container = document.createElement("div");
+    container.className = "wiki-view";
+
+    const input = document.createElement("input");
+    input.className = "search-input wiki-search-input";
+    input.type = "search";
+    input.placeholder = "Search points of interest…";
+    container.appendChild(input);
+
+    const list = document.createElement("div");
+    list.className = "wiki-list";
+    container.appendChild(list);
+
+    function openEntry(poi) {
+      state.wikiEntryId = poi.id;
+      render();
+      window.scrollTo(0, 0);
+    }
+
+    function renderRows(pois) {
+      list.innerHTML = "";
+      if (!pois.length) {
+        const note = document.createElement("div");
+        note.className = "empty-note";
+        note.textContent = "No matches.";
+        list.appendChild(note);
+        return;
+      }
+      pois.forEach((poi) => {
+        const row = document.createElement("button");
+        row.type = "button";
+        row.className = "wiki-row";
+        row.innerHTML = `
+          <span class="tml-dot" style="background:${categoryMapColor("poi")}"></span>
+          <span class="wiki-row-body">
+            <span class="wiki-row-name">${poi.name}</span>
+            <span class="wiki-row-category">${poi.category} · ${poi.country}</span>
+          </span>
+        `;
+        row.addEventListener("click", () => openEntry(poi));
+        list.appendChild(row);
+      });
+    }
+
+    input.addEventListener("input", () => {
+      const q = input.value.trim();
+      if (!q) {
+        renderRows(POI_LIST);
+        return;
+      }
+      const query = normalizeForSearch(q);
+      const queryCollapsed = collapseForSearch(q);
+      const matches = POI_SEARCH_INDEX.filter(
+        (e) => e.haystack.includes(query) || (queryCollapsed && e.haystackCollapsed.includes(queryCollapsed))
+      ).map((e) => e.poi);
+      renderRows(matches);
+    });
+
+    renderRows(POI_LIST);
+    return container;
+  }
+
+  function renderWikiEntryView(poi) {
+    const container = document.createElement("div");
+    container.className = "wiki-view wiki-entry-view";
+
+    const backBtn = document.createElement("button");
+    backBtn.type = "button";
+    backBtn.className = "tickets-back";
+    backBtn.textContent = "‹ All entries";
+    backBtn.addEventListener("click", () => {
+      state.wikiEntryId = null;
+      render();
+      window.scrollTo(0, 0);
+    });
+    container.appendChild(backBtn);
+
+    const head = document.createElement("div");
+    head.className = "wiki-entry-head";
+    head.innerHTML = `
+      <p class="wiki-entry-eyebrow">
+        <span class="tml-dot" style="background:${categoryMapColor("poi")}"></span>
+        ${poi.category} · ${poi.country}
+      </p>
+      <h1 class="wiki-entry-title">${poi.name}</h1>
+    `;
+    container.appendChild(head);
+
+    const pinRef = TRIP_MAP_POINTS.poiPinById[poi.id];
+    if (pinRef) {
+      const mapBtn = document.createElement("button");
+      mapBtn.type = "button";
+      mapBtn.className = "leg-map-link wiki-map-btn";
+      mapBtn.textContent = "🗺️ View on map";
+      mapBtn.addEventListener("click", () => goToMapPin(pinRef.key, pinRef.lat, pinRef.lon));
+      container.appendChild(mapBtn);
+    }
+
+    const body = document.createElement("div");
+    body.className = "wiki-entry-body";
+    body.innerHTML = mdLiteToHtml(poi.content);
+    container.appendChild(body);
+
+    if (poi.fun_fact) {
+      const fact = document.createElement("div");
+      fact.className = "wiki-fun-fact";
+      fact.innerHTML = `<span class="wiki-fun-fact-label">Fun fact</span>${mdLiteToHtml(poi.fun_fact)}`;
+      container.appendChild(fact);
+    }
+
+    if (poi.sources && poi.sources.length) {
+      const sources = document.createElement("div");
+      sources.className = "wiki-sources";
+      sources.textContent = "Sources: " + poi.sources.join(", ");
+      container.appendChild(sources);
+    }
+
+    return container;
+  }
+
   // ---------------- Checklist view ----------------
   function renderChecklistView() {
     const container = document.createElement("div");
@@ -2373,6 +2614,7 @@
     const items = [
       { key: "day", icon: "🗓️", label: "Day" },
       { key: "map", icon: "🗺️", label: "Map" },
+      { key: "wiki", icon: "📖", label: "Wiki" },
       { key: "tickets", icon: "🎫", label: "Tickets" },
       { key: "search", icon: "🔍", label: "Search" },
       { key: "checklist", icon: "✓", label: "Checklist" }
@@ -2410,6 +2652,7 @@
     }
     saveLastView(state.view);
     saveTicketsDayIndex(state.ticketsDayIndex);
+    saveWikiEntryId(state.wikiEntryId);
     teardownTripMap();
     root.innerHTML = "";
 
@@ -2433,6 +2676,7 @@
     let view;
     if (state.view === "day") view = renderDayView();
     else if (state.view === "map") view = renderTripMapView();
+    else if (state.view === "wiki") view = renderWikiView();
     else if (state.view === "tickets") view = renderTicketsView();
     else if (state.view === "search") view = renderSearchView();
     else view = renderChecklistView();

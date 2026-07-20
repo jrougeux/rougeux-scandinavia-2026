@@ -1120,6 +1120,119 @@ input:focus-visible {
   height: auto;
 }
 
+/* ---------- Wiki view (points of interest) ---------- */
+.wiki-view { padding: 16px; max-width: 640px; margin: 0 auto; }
+
+.wiki-list {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--surface);
+}
+.wiki-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 12px 16px;
+  min-height: 52px;
+  box-sizing: border-box;
+  text-align: left;
+  border: none;
+  border-bottom: 1px solid var(--line);
+  background: none;
+  font-family: inherit;
+  touch-action: manipulation;
+}
+.wiki-row:last-child { border-bottom: none; }
+.wiki-row:active { background: var(--surface-2); }
+.wiki-row .tml-dot { flex: 0 0 auto; }
+.wiki-row-body {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.wiki-row-name { font-size: 14px; font-weight: 600; color: var(--text); }
+.wiki-row-category {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.wiki-entry-head { margin-bottom: 4px; }
+.wiki-entry-eyebrow {
+  display: flex;
+  align-items: center;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-faint);
+  margin: 0 0 6px;
+}
+.wiki-entry-eyebrow .tml-dot { margin-right: 6px; }
+.wiki-entry-title {
+  font-family: var(--font-display);
+  font-size: 22px;
+  margin: 0;
+  color: var(--text);
+  line-height: 1.25;
+}
+
+/* Reuses .leg-map-link's look but defined standalone since that rule is
+   scoped to ".leg .leg-map-link" and this button sits outside a .leg. */
+.wiki-map-btn {
+  display: inline-block;
+  margin: 10px 0 16px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent);
+  text-decoration: none;
+  border: none;
+  background: none;
+  padding: 0;
+  font-family: inherit;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.wiki-map-btn:active { opacity: 0.6; }
+
+.wiki-entry-body { font-size: 14.5px; line-height: 1.65; color: var(--text-dim); }
+.wiki-entry-body p { margin: 0 0 12px; }
+.wiki-entry-body p:last-child { margin-bottom: 0; }
+.wiki-entry-body strong { color: var(--text); font-weight: 700; }
+
+.wiki-fun-fact {
+  margin-top: 16px;
+  padding: 12px 14px;
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--text-dim);
+}
+.wiki-fun-fact-label {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-faint);
+  margin-bottom: 4px;
+}
+.wiki-fun-fact p { margin: 0; }
+
+.wiki-sources {
+  margin-top: 14px;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
 /* ---------- Checklist view ---------- */
 .checklist-view { padding: 16px; max-width: 640px; margin: 0 auto; }
 .checklist-item {
