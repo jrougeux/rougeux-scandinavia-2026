@@ -1,4 +1,4 @@
-const CACHE_NAME = "rougeux-trip-v36";
+const CACHE_NAME = "rougeux-trip-v37";
 const ASSETS = [
   "./",
   "./index.html",
@@ -7,6 +7,8 @@ const ASSETS = [
   "./data.js",
   "./poi_data.js",
   "./manifest.json",
+  "./favicon.ico",
+  "./icons/favicon-32.png",
   "./icons/icon-192.png",
   "./icons/icon-512.png",
   "./assets/fonts/dm-sans-normal-latin.woff2",

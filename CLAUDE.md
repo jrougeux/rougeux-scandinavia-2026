@@ -40,7 +40,21 @@ still dependency-free vanilla JS.
   as changed, won't install a new service worker, and silently keeps
   serving the old cached files even after a normal reload (a hard
   refresh / cache clear is needed to recover without a version bump)
-- `icons/` — app icons (192px, 512px)
+- `icons/` — app icons (`icon-192.png`, `icon-512.png`, `favicon-32.png`),
+  plus `favicon.ico` (multi-resolution, 16/32/48/64px) in the repo root.
+  All four share one design: the Swedish flag (blue `#006AA7` field, yellow
+  `#FECC02` Nordic cross) on one half and the Norwegian flag (red
+  `#EF2B2D` field, white-fimbriated blue `#002868` Nordic cross) on the
+  other, split by a black diagonal line through the exact center of the
+  square (any line through a square's center divides it into two
+  equal-area halves, so this guarantees a true 50/50 split while still
+  reading as angled rather than a plain vertical seam). Generated with
+  Pillow — see the one-off script pattern in git history if regenerating
+  after a redesign; there's no ongoing build step, these are just static
+  PNGs/ICO checked into the repo
+- `favicon.ico` — see `icons/` above; referenced via `<link rel="icon">`
+  in `index.html` alongside `icons/favicon-32.png` for browsers that
+  prefer a PNG favicon
 - `assets/fonts/` — self-hosted DM Sans woff2 files (normal + italic, latin +
   latin-ext), loaded via `@font-face` in `styles.css` so the app works fully
   offline with no Google Fonts dependency
