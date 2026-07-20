@@ -193,6 +193,27 @@ Defined as CSS custom properties in `styles.css` (`:root`):
   redundant click on the already-active Day tab, or jumping to a specific
   day/leg (prev/next, jump sheet, search, a map popup's "Go to Day"), both
   intentionally keep their existing behavior instead.
+- Search is diacritic-insensitive both ways: typing "ostermalm" matches
+  "Östermalm" and typing "östermalm" still works too, since the query and
+  the search index both go through the same `normalizeForSearch()`.
+  `DIACRITIC_MAP` in `app.js` is an explicit table of every diacritic
+  actually present in the trip data (Swedish å/ä/ö, Norwegian ø/æ, plus
+  loanwords like "Café"/"Nærøyfjord"), not a generic Unicode-normalize
+  call -- re-check this table (e.g. `grep -P "[^\x00-\x7F]" data.js`) if
+  new non-ASCII characters get added to the trip data later, since ø/æ
+  don't decompose the way å/ä/ö/é do.
+- Search also ignores spaces/punctuation, so "GamlaStan" matches "Gamla
+  Stan" and "T-bana" matches "Tbana" -- each index entry carries a second
+  `haystackCollapsed` field (`collapseForSearch()`, built on top of
+  `normalizeForSearch()`) with everything but letters/digits stripped, and
+  a query matches if it hits *either* the plain or the collapsed haystack.
+  Deliberately doesn't do word-order-independent or typo-tolerant
+  matching -- there's no relevance ranking yet (results are just filtered
+  and capped at 40 in day order), so a looser match could surface more
+  loosely-related results with no way to sort the better ones first.
+  `collapseForSearch()` guards against an empty result (e.g. a query of
+  just "-" collapses to "") since `"x".includes("")` is always true and
+  would otherwise match every entry.
 
 ## Local development
 

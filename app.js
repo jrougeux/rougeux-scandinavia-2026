@@ -1441,26 +1441,62 @@
   }
 
   // ---------------- Search view ----------------
+  // Every diacritic actually used across the trip data (Swedish å/ä/ö,
+  // Norwegian ø/æ, plus loanwords like "Café"/"Nærøyfjord"), mapped to its
+  // closest plain-English letter, so searching "ostermalm" matches
+  // "Östermalm" and "cafe" matches "Café" -- and typing the accented form
+  // still works too, since both sides of the match go through this.
+  const DIACRITIC_MAP = {
+    å: "a",
+    ä: "a",
+    à: "a",
+    ö: "o",
+    ø: "o",
+    é: "e",
+    ü: "u",
+    æ: "ae"
+  };
+  function normalizeForSearch(str) {
+    return str
+      .toLowerCase()
+      .split("")
+      .map((ch) => DIACRITIC_MAP[ch] || ch)
+      .join("");
+  }
+
+  // Strips everything but letters/digits, so word-boundary differences
+  // don't matter -- e.g. a query of "GamlaStan" (no space) still matches
+  // indexed text "Gamla Stan" (with one), and "T-bana" matches "Tbana".
+  // Applied on top of (not instead of) the plain substring match, so exact
+  // phrase search still works too.
+  function collapseForSearch(str) {
+    return normalizeForSearch(str).replace(/[^a-z0-9]+/g, "");
+  }
+
   function buildSearchIndex() {
     const idx = [];
     DAYS.forEach((day) => {
       day.legs.forEach((leg) => {
+        const raw = [leg.activity, leg.detail, leg.mode].filter(Boolean).join(" ");
         idx.push({
           dayIndex: DAYS.indexOf(day),
           dayLabel: `Day ${day.day_number} · ${fmtDateLabel(day)}`,
           title: leg.activity,
           detail: [leg.mode, leg.detail].filter(Boolean).join(" — "),
-          haystack: [leg.activity, leg.detail, leg.mode].filter(Boolean).join(" ").toLowerCase(),
+          haystack: normalizeForSearch(raw),
+          haystackCollapsed: collapseForSearch(raw),
           legNum: leg.num
         });
       });
       (day.dining || []).forEach((d, diningIndex) => {
+        const raw = [d.name, d.meal, d.address, d.description].filter(Boolean).join(" ");
         idx.push({
           dayIndex: DAYS.indexOf(day),
           dayLabel: `Day ${day.day_number} · ${fmtDateLabel(day)}`,
           title: d.name + (d.leading ? " ★" : ""),
           detail: [d.meal, d.address, d.description].filter(Boolean).join(" — "),
-          haystack: [d.name, d.meal, d.address, d.description].filter(Boolean).join(" ").toLowerCase(),
+          haystack: normalizeForSearch(raw),
+          haystackCollapsed: collapseForSearch(raw),
           diningIndex
         });
       });
@@ -1483,7 +1519,7 @@
 
     function runSearch(q) {
       results.innerHTML = "";
-      const query = q.trim().toLowerCase();
+      const query = normalizeForSearch(q.trim());
       if (!query) {
         const note = document.createElement("div");
         note.className = "empty-note";
@@ -1491,7 +1527,13 @@
         results.appendChild(note);
         return;
       }
-      const matches = SEARCH_INDEX.filter((item) => item.haystack.includes(query)).slice(0, 40);
+      // queryCollapsed can end up empty (e.g. a query of just "-"), and
+      // "".includes("") is always true -- guard so that doesn't match
+      // every entry.
+      const queryCollapsed = collapseForSearch(q.trim());
+      const matches = SEARCH_INDEX.filter(
+        (item) => item.haystack.includes(query) || (queryCollapsed && item.haystackCollapsed.includes(queryCollapsed))
+      ).slice(0, 40);
       if (!matches.length) {
         const note = document.createElement("div");
         note.className = "empty-note";
