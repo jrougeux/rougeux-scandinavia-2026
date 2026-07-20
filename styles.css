@@ -134,7 +134,7 @@ input:focus-visible {
 .app-title {
   font-family: var(--font-display);
   font-weight: 700;
-  font-size: 15px;
+  font-size: 16.5px;
   letter-spacing: 0.02em;
   color: #fff;
   margin: 0 0 2px;
@@ -142,7 +142,7 @@ input:focus-visible {
 
 .app-subtitle {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 12px;
   color: rgba(255, 255, 255, 0.72);
   margin: 0;
 }
@@ -168,7 +168,7 @@ input:focus-visible {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 22px;
+  font-size: 24px;
   line-height: 1;
   color: var(--text-dim);
   background: var(--surface);
@@ -196,7 +196,7 @@ input:focus-visible {
 }
 .day-nav-label .dnl-eyebrow {
   font-family: var(--font-mono);
-  font-size: 10.5px;
+  font-size: 11.5px;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--text-faint);
@@ -204,14 +204,14 @@ input:focus-visible {
 .day-nav-label .dnl-current {
   font-family: var(--font-display);
   font-weight: 600;
-  font-size: 14px;
+  font-size: 15.5px;
   color: var(--text);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   max-width: 100%;
 }
-.day-nav-label .dnl-flag { font-size: 13px; }
+.day-nav-label .dnl-flag { font-size: 14.5px; }
 
 .day-progress {
   height: 4px;
@@ -259,7 +259,7 @@ input:focus-visible {
   border-bottom: 1px solid var(--line);
   font-family: var(--font-display);
   font-weight: 700;
-  font-size: 15px;
+  font-size: 16.5px;
   flex: 0 0 auto;
 }
 .day-sheet-close {
@@ -268,7 +268,7 @@ input:focus-visible {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 15px;
+  font-size: 16.5px;
   color: var(--text-dim);
   border-radius: 50%;
   touch-action: manipulation;
@@ -282,7 +282,7 @@ input:focus-visible {
 }
 .day-sheet-group {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--text-faint);
@@ -303,12 +303,12 @@ input:focus-visible {
 .day-sheet-row:last-child { border-bottom: none; }
 .day-sheet-row.active { background: var(--surface-2); }
 .day-sheet-row .dsr-flag {
-  font-size: 15px;
+  font-size: 16.5px;
   flex: 0 0 auto;
 }
 .day-sheet-row .dsr-num {
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: 13px;
   color: var(--text-faint);
   width: 20px;
   flex: 0 0 auto;
@@ -321,11 +321,11 @@ input:focus-visible {
 }
 .day-sheet-row .dsr-date {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 12px;
   color: var(--text-faint);
 }
 .day-sheet-row .dsr-title {
-  font-size: 14px;
+  font-size: 15.5px;
   font-weight: 600;
   color: var(--text);
   overflow: hidden;
@@ -346,7 +346,7 @@ input:focus-visible {
 
 .day-eyebrow {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 12px;
   color: var(--text-dim);
   text-transform: uppercase;
   letter-spacing: 0.08em;
@@ -356,13 +356,13 @@ input:focus-visible {
 .day-title {
   font-family: var(--font-display);
   font-weight: 700;
-  font-size: 22px;
+  font-size: 24px;
   line-height: 1.25;
   margin: 0 0 6px;
 }
 
 .day-subtitle {
-  font-size: 13px;
+  font-size: 14.5px;
   color: var(--text-dim);
   margin: 0;
 }
@@ -376,10 +376,10 @@ input:focus-visible {
   border-radius: var(--radius);
   padding: 10px 12px;
   margin: 14px 0;
-  font-size: 13px;
+  font-size: 14.5px;
 }
-.lodging-banner .icon { font-size: 16px; }
-.lodging-banner .label { color: var(--text-dim); font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; }
+.lodging-banner .icon { font-size: 17.5px; }
+.lodging-banner .label { color: var(--text-dim); font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; }
 
 .reminders {
   background: var(--surface-2);
@@ -387,12 +387,12 @@ input:focus-visible {
   border-radius: var(--radius);
   padding: 12px;
   margin: 14px 0;
-  font-size: 14px;
+  font-size: 15.5px;
   line-height: 1.5;
 }
 .reminders .label {
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--text-faint);
@@ -405,7 +405,7 @@ input:focus-visible {
 /* ---------- Legs (departure board) ---------- */
 .section-label {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--text-faint);
@@ -466,14 +466,14 @@ input:focus-visible {
 .leg .num {
   grid-area: num;
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: 13px;
   color: var(--text-faint);
 }
 
 .leg .times {
   grid-area: times;
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: 13px;
   color: var(--text-dim);
   line-height: 1.4;
   overflow-wrap: anywhere;
@@ -484,14 +484,14 @@ input:focus-visible {
 .leg .body { grid-area: body; min-width: 0; }
 .leg .activity {
   font-weight: 600;
-  font-size: 14.5px;
+  font-size: 16px;
   margin: 0 0 4px;
   line-height: 1.4;
 }
 .leg .mode-chip {
   display: inline-block;
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 12px;
   padding: 2px 8px;
   border-radius: 20px;
   background: var(--surface-2);
@@ -507,7 +507,7 @@ input:focus-visible {
 .leg .mode-chip.cat-note      { background: var(--cat-note-bg);      color: var(--cat-note);      border-color: var(--cat-note); }
 
 .leg .detail {
-  font-size: 13.5px;
+  font-size: 15px;
   color: var(--text-dim);
   line-height: 1.5;
   margin: 0;
@@ -518,7 +518,7 @@ input:focus-visible {
   display: inline-block;
   margin-top: 6px;
   margin-right: 14px;
-  font-size: 12.5px;
+  font-size: 14px;
   font-weight: 600;
   color: var(--accent);
   text-decoration: none;
@@ -545,7 +545,7 @@ input:focus-visible {
   box-sizing: border-box;
   cursor: pointer;
   font-weight: 600;
-  font-size: 14.5px;
+  font-size: 16px;
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -557,7 +557,7 @@ input:focus-visible {
   content: '+';
   font-family: var(--font-mono);
   color: var(--text-faint);
-  font-size: 16px;
+  font-size: 17.5px;
 }
 .collapsible[open] summary::after { content: '–'; }
 .collapsible .content { padding: 0 14px 14px; }
@@ -566,12 +566,12 @@ input:focus-visible {
 .story-block:last-child { margin-bottom: 0; }
 .story-block h4 {
   font-family: var(--font-display);
-  font-size: 13.5px;
+  font-size: 15px;
   margin: 0 0 4px;
   color: var(--text);
 }
 .story-block p {
-  font-size: 14px;
+  font-size: 15.5px;
   line-height: 1.6;
   color: var(--text-dim);
   margin: 0;
@@ -612,7 +612,7 @@ input:focus-visible {
   height: 32px;
   background: var(--surface);
   color: var(--text);
-  font-size: 17px;
+  font-size: 18.5px;
   line-height: 1;
   font-family: var(--font-mono);
   touch-action: manipulation;
@@ -622,7 +622,7 @@ input:focus-visible {
 .map-zoom-btn:disabled { opacity: 0.35; }
 
 .map-attribution {
-  font-size: 10.5px;
+  font-size: 11.5px;
   color: var(--text-faint);
 }
 .map-attribution a { color: var(--text-faint); text-decoration: underline; text-underline-offset: 2px; }
@@ -640,7 +640,7 @@ input:focus-visible {
   border: 1px solid var(--line);
   border-radius: var(--radius);
   padding: 10px;
-  font-size: 13.5px;
+  font-size: 15px;
   font-weight: 600;
   color: var(--accent);
   touch-action: manipulation;
@@ -660,14 +660,14 @@ input:focus-visible {
   flex-wrap: wrap;
   gap: 6px 8px;
 }
-.dining-item .name { font-weight: 600; font-size: 14.5px; }
+.dining-item .name { font-weight: 600; font-size: 16px; }
 .dining-item.leading .name::before {
   content: '★ ';
   color: var(--amber);
 }
 .dining-badge {
   font-family: var(--font-mono);
-  font-size: 9.5px;
+  font-size: 10.5px;
   text-transform: uppercase;
   padding: 1px 6px;
   border-radius: 10px;
@@ -676,12 +676,12 @@ input:focus-visible {
   color: var(--text-faint);
 }
 .dining-item .meta {
-  font-size: 12px;
+  font-size: 13px;
   color: var(--text-faint);
   margin: 3px 0 5px;
 }
-.dining-item .desc { font-size: 13.5px; color: var(--text-dim); line-height: 1.55; margin: 0; }
-.dining-item .contact-line { font-family: var(--font-mono); font-size: 12.5px; color: var(--text-faint); margin-top: 6px; }
+.dining-item .desc { font-size: 15px; color: var(--text-dim); line-height: 1.55; margin: 0; }
+.dining-item .contact-line { font-family: var(--font-mono); font-size: 14px; color: var(--text-faint); margin-top: 6px; }
 .dining-item .contact-line a { color: var(--text-dim); text-decoration: underline; text-underline-offset: 2px; }
 .dining-item .contact-line .dining-map-view-btn {
   border: none;
@@ -690,7 +690,7 @@ input:focus-visible {
   margin: 0;
   font: inherit;
   font-family: var(--font-mono);
-  font-size: 12.5px;
+  font-size: 14px;
   color: var(--text-dim);
   text-decoration: underline;
   text-underline-offset: 2px;
@@ -703,11 +703,11 @@ input:focus-visible {
   gap: 4px;
   padding: 10px 0;
   border-top: 1px solid var(--line);
-  font-size: 13px;
+  font-size: 14.5px;
 }
 .contact-item:first-child { border-top: none; }
 .contact-item .cname { font-weight: 600; }
-.contact-item .cused { color: var(--text-faint); font-size: 12px; }
+.contact-item .cused { color: var(--text-faint); font-size: 13px; }
 .contact-item .cphone {
   font-family: var(--font-mono);
   color: var(--text);
@@ -743,13 +743,13 @@ input:focus-visible {
      left untouched -- that's a real OS measurement, not ours to shrink). */
   min-height: 48px;
   padding: 6px 4px 4px;
-  font-size: 11px;
+  font-size: 12px;
   font-family: var(--font-mono);
   color: var(--text-faint);
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
-.bottom-nav button .bicon { font-size: 20px; }
+.bottom-nav button .bicon { font-size: 22px; }
 .bottom-nav button.active { color: var(--text); }
 .bottom-nav button.active .bicon { color: var(--amber); }
 
@@ -766,7 +766,7 @@ input:focus-visible {
   border: 1px solid var(--line);
   border-radius: var(--radius);
   padding: 10px;
-  font-size: 13px;
+  font-size: 14.5px;
   font-family: var(--font-mono);
   color: var(--text-dim);
   text-align: center;
@@ -783,7 +783,7 @@ input:focus-visible {
 }
 .trip-map-hint {
   margin: 10px 16px 0;
-  font-size: 12.5px;
+  font-size: 14px;
   color: var(--text-faint);
   text-align: center;
 }
@@ -793,7 +793,7 @@ input:focus-visible {
   gap: 16px;
   flex-wrap: wrap;
   margin: 8px 16px 0;
-  font-size: 12px;
+  font-size: 13px;
   color: var(--text-dim);
 }
 .tml-item { display: inline-flex; align-items: center; gap: 5px; }
@@ -823,13 +823,13 @@ input:focus-visible {
 }
 .trip-map-popup .tmp-eyebrow {
   font-family: var(--font-mono);
-  font-size: 10.5px;
+  font-size: 11.5px;
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: var(--text-faint);
   margin-bottom: 3px;
 }
-.trip-map-popup .tmp-title { font-weight: 600; font-size: 14px; color: var(--text); line-height: 1.35; }
+.trip-map-popup .tmp-title { font-weight: 600; font-size: 15.5px; color: var(--text); line-height: 1.35; }
 .trip-map-popup .tmp-dot {
   width: 8px;
   height: 8px;
@@ -839,7 +839,7 @@ input:focus-visible {
   border: 1px solid rgba(255,255,255,0.7);
   vertical-align: middle;
 }
-.trip-map-popup .tmp-sub { font-size: 12.5px; color: var(--text-dim); margin-top: 2px; }
+.trip-map-popup .tmp-sub { font-size: 14px; color: var(--text-dim); margin-top: 2px; }
 .trip-map-popup .tmp-goto {
   display: block;
   width: 100%;
@@ -849,7 +849,7 @@ input:focus-visible {
   border: 1px solid var(--line);
   background: var(--surface-2);
   color: var(--accent);
-  font-size: 12.5px;
+  font-size: 14px;
   font-weight: 600;
   text-align: center;
   touch-action: manipulation;
@@ -861,7 +861,7 @@ input:focus-visible {
   padding-top: 8px;
   border-top: 1px solid var(--line);
   font-family: var(--font-mono);
-  font-size: 10.5px;
+  font-size: 11.5px;
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--text-faint);
@@ -873,14 +873,14 @@ input:focus-visible {
 .trip-map-popup .tmp-visit-day {
   display: block;
   font-family: var(--font-mono);
-  font-size: 10.5px;
+  font-size: 11.5px;
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--text-faint);
 }
 .trip-map-popup .tmp-visit-label {
   display: block;
-  font-size: 12.5px;
+  font-size: 14px;
   font-weight: 600;
   color: var(--accent);
   margin-top: 1px;
@@ -897,7 +897,7 @@ input:focus-visible {
 .leaflet-popup-content { margin: 10px 12px; }
 .leaflet-popup-tip { background: var(--surface); }
 .leaflet-container { font-family: var(--font-body); }
-.leaflet-control-attribution { font-size: 10px; }
+.leaflet-control-attribution { font-size: 11px; }
 
 /* ---------- Search view ---------- */
 .search-view { padding: 16px; max-width: 640px; margin: 0 auto; }
@@ -908,7 +908,7 @@ input:focus-visible {
   border: 1px solid var(--line);
   background: var(--surface);
   color: var(--text);
-  font-size: 16px; /* keep >=16px: smaller sizes trigger iOS auto-zoom on focus */
+  font-size: 18px; /* keep >=16px: smaller sizes trigger iOS auto-zoom on focus */
   font-family: var(--font-body);
   margin-bottom: 14px;
 }
@@ -925,14 +925,14 @@ input:focus-visible {
 }
 .search-result .day-tag {
   font-family: var(--font-mono);
-  font-size: 10.5px;
+  font-size: 11.5px;
   color: var(--text-faint);
   text-transform: uppercase;
   margin-bottom: 3px;
 }
-.search-result .match-title { font-weight: 600; font-size: 14.5px; margin-bottom: 3px; }
-.search-result .match-detail { font-size: 13px; color: var(--text-dim); line-height: 1.45; }
-.empty-note { color: var(--text-faint); font-size: 13px; padding: 20px 4px; text-align: center; }
+.search-result .match-title { font-weight: 600; font-size: 16px; margin-bottom: 3px; }
+.search-result .match-detail { font-size: 14.5px; color: var(--text-dim); line-height: 1.45; }
+.empty-note { color: var(--text-faint); font-size: 14.5px; padding: 20px 4px; text-align: center; }
 
 /* ---------- Tickets view ---------- */
 .tickets-view { padding: 16px; max-width: 640px; margin: 0 auto; }
@@ -957,10 +957,10 @@ input:focus-visible {
 }
 .tickets-day-row:last-child { border-bottom: none; }
 .tickets-day-row:active { background: var(--surface-2); }
-.tickets-day-row .tdr-flag { font-size: 15px; flex: 0 0 auto; }
+.tickets-day-row .tdr-flag { font-size: 16.5px; flex: 0 0 auto; }
 .tickets-day-row .tdr-num {
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: 13px;
   color: var(--text-faint);
   width: 20px;
   flex: 0 0 auto;
@@ -974,11 +974,11 @@ input:focus-visible {
 }
 .tickets-day-row .tdr-date {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 12px;
   color: var(--text-faint);
 }
 .tickets-day-row .tdr-title {
-  font-size: 14px;
+  font-size: 15.5px;
   font-weight: 600;
   color: var(--text);
   overflow: hidden;
@@ -990,7 +990,7 @@ input:focus-visible {
   min-width: 22px;
   text-align: center;
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 600;
   color: var(--text-dim);
   background: var(--surface-2);
@@ -1003,7 +1003,7 @@ input:focus-visible {
   display: inline-block;
   margin-bottom: 12px;
   padding: 8px 4px;
-  font-size: 13.5px;
+  font-size: 15px;
   font-weight: 600;
   color: var(--accent);
   touch-action: manipulation;
@@ -1035,8 +1035,8 @@ input:focus-visible {
 }
 .ticket-row:last-child { border-bottom: none; }
 .ticket-row:active { background: var(--surface-2); }
-.ticket-row .ticket-icon { font-size: 18px; flex: 0 0 auto; }
-.ticket-row .ticket-label { font-size: 14.5px; font-weight: 600; line-height: 1.4; }
+.ticket-row .ticket-icon { font-size: 20px; flex: 0 0 auto; }
+.ticket-row .ticket-label { font-size: 16px; font-weight: 600; line-height: 1.4; }
 
 /* Full-screen takeover (see render()) -- deliberately the *only* scrollable
    thing on screen while a ticket file is open, since a touch drag on
@@ -1064,7 +1064,7 @@ input:focus-visible {
 .ticket-file-back {
   flex: 0 0 auto;
   padding: 8px 6px;
-  font-size: 14px;
+  font-size: 15.5px;
   font-weight: 600;
   color: var(--accent);
   touch-action: manipulation;
@@ -1073,7 +1073,7 @@ input:focus-visible {
 .ticket-file-label {
   flex: 1;
   min-width: 0;
-  font-size: 13.5px;
+  font-size: 15px;
   font-weight: 600;
   color: var(--text);
   overflow: hidden;
@@ -1087,7 +1087,7 @@ input:focus-visible {
   justify-content: center;
   width: 36px;
   height: 36px;
-  font-size: 16px;
+  font-size: 17.5px;
   color: var(--accent);
   text-decoration: none;
   touch-action: manipulation;
@@ -1154,10 +1154,10 @@ input:focus-visible {
   flex-direction: column;
   gap: 2px;
 }
-.wiki-row-name { font-size: 14px; font-weight: 600; color: var(--text); }
+.wiki-row-name { font-size: 15.5px; font-weight: 600; color: var(--text); }
 .wiki-row-category {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 12px;
   color: var(--text-faint);
   text-transform: uppercase;
   letter-spacing: 0.03em;
@@ -1168,7 +1168,7 @@ input:focus-visible {
   display: flex;
   align-items: center;
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--text-faint);
@@ -1177,7 +1177,7 @@ input:focus-visible {
 .wiki-entry-eyebrow .tml-dot { margin-right: 6px; }
 .wiki-entry-title {
   font-family: var(--font-display);
-  font-size: 22px;
+  font-size: 24px;
   margin: 0;
   color: var(--text);
   line-height: 1.25;
@@ -1188,7 +1188,7 @@ input:focus-visible {
 .wiki-map-btn {
   display: inline-block;
   margin: 10px 0 16px;
-  font-size: 13px;
+  font-size: 14.5px;
   font-weight: 600;
   color: var(--accent);
   text-decoration: none;
@@ -1201,7 +1201,7 @@ input:focus-visible {
 }
 .wiki-map-btn:active { opacity: 0.6; }
 
-.wiki-entry-body { font-size: 14.5px; line-height: 1.65; color: var(--text-dim); }
+.wiki-entry-body { font-size: 16px; line-height: 1.65; color: var(--text-dim); }
 .wiki-entry-body p { margin: 0 0 12px; }
 .wiki-entry-body p:last-child { margin-bottom: 0; }
 .wiki-entry-body strong { color: var(--text); font-weight: 700; }
@@ -1212,14 +1212,14 @@ input:focus-visible {
   border-radius: var(--radius);
   background: var(--surface-2);
   border: 1px solid var(--line);
-  font-size: 13.5px;
+  font-size: 15px;
   line-height: 1.55;
   color: var(--text-dim);
 }
 .wiki-fun-fact-label {
   display: block;
   font-family: var(--font-mono);
-  font-size: 10.5px;
+  font-size: 11.5px;
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: var(--text-faint);
@@ -1229,7 +1229,7 @@ input:focus-visible {
 
 .wiki-sources {
   margin-top: 14px;
-  font-size: 12px;
+  font-size: 13px;
   color: var(--text-faint);
 }
 
@@ -1255,9 +1255,9 @@ input:focus-visible {
   accent-color: var(--amber);
   flex: 0 0 auto;
 }
-.checklist-item .ci-text { font-size: 14px; line-height: 1.5; }
+.checklist-item .ci-text { font-size: 15.5px; line-height: 1.5; }
 .checklist-item.checked .ci-text { color: var(--text-faint); text-decoration: line-through; }
-.checklist-item .ci-day { font-family: var(--font-mono); font-size: 10.5px; color: var(--text-faint); display: block; margin-bottom: 3px; text-transform: uppercase; }
+.checklist-item .ci-day { font-family: var(--font-mono); font-size: 11.5px; color: var(--text-faint); display: block; margin-bottom: 3px; text-transform: uppercase; }
 
 @media (min-width: 700px) {
   .day-view, .search-view, .checklist-view { padding: 24px 16px; }
@@ -1277,6 +1277,6 @@ input:focus-visible {
     align-items: baseline;
   }
 
-  .day-nav-arrow { font-size: 24px; }
-  .day-nav-label .dnl-current { font-size: 15px; }
+  .day-nav-arrow { font-size: 26.5px; }
+  .day-nav-label .dnl-current { font-size: 16.5px; }
 }
