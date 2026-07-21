@@ -1,4 +1,4 @@
-const CACHE_NAME = "rougeux-trip-v49";
+const CACHE_NAME = "rougeux-trip-v51";
 // Holds everything fetched at runtime and not part of the precached shell
 // below: map tiles (per-day canvas renderer and the trip-wide Leaflet
 // map, including the proactive prefetch in app.js) and ticket PDFs/JPGs.
@@ -34,7 +34,22 @@ const ASSETS = [
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(ASSETS)).then(() => self.skipWaiting())
+    caches.open(CACHE_NAME).then((cache) =>
+      // Deliberately NOT cache.addAll(ASSETS) -- addAll is all-or-nothing,
+      // so a single asset failing to fetch (a flaky edge/CDN blip during
+      // deploy, a transient network hiccup) rejects the whole install and
+      // silently strands the app on the OLD service worker forever, with
+      // no visible error and no future retry, since a failed install
+      // never reaches activate/skipWaiting. Caching each asset
+      // individually means one bad fetch can't block everything else --
+      // a missed asset just falls back to the runtime fetch handler's
+      // opportunistic caching the first time it's actually requested.
+      Promise.all(
+        ASSETS.map((url) => cache.add(url).catch((err) => {
+          console.warn("[sw] precache failed, continuing anyway:", url, err);
+        }))
+      )
+    ).then(() => self.skipWaiting())
   );
 });
 

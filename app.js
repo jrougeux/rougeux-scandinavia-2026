@@ -32,8 +32,15 @@
     try { localStorage.setItem("rougeux_checks", JSON.stringify(state.checks)); } catch (e) {}
   }
   function loadLastDay() {
-    const saved = localStorage.getItem("rougeux_day_index");
-    if (saved !== null && !isNaN(+saved)) return +saved;
+    try {
+      const saved = localStorage.getItem("rougeux_day_index");
+      // Bounds-checked (not just "is it a number") so a stale/corrupted
+      // value -- or one left over from a prior version of the trip data
+      // with a different day count -- can't point state.dayIndex past
+      // the end of DAYS, which would crash every DAYS[state.dayIndex]
+      // access throughout the Day view.
+      if (saved !== null && !isNaN(+saved) && +saved >= 0 && +saved < DAYS.length) return +saved;
+    } catch (e) {}
     // default to today's matching day if within trip range
     const today = new Date();
     const idx = DAYS.findIndex((d) => sameDate(new Date(d.date + "T00:00:00"), today));
@@ -165,6 +172,7 @@
     row.className = "day-nav";
 
     const prev = document.createElement("button");
+    prev.type = "button";
     prev.className = "day-nav-arrow";
     prev.setAttribute("aria-label", "Previous day");
     prev.textContent = "‹";
@@ -172,6 +180,7 @@
     prev.addEventListener("click", () => goToDay(state.dayIndex - 1));
 
     const label = document.createElement("button");
+    label.type = "button";
     label.className = "day-nav-label";
     label.innerHTML = `
       <span class="dnl-eyebrow">Day ${day.day_number} of ${DAYS.length}</span>
@@ -181,6 +190,7 @@
     label.addEventListener("click", openDaySheet);
 
     const next = document.createElement("button");
+    next.type = "button";
     next.className = "day-nav-arrow";
     next.setAttribute("aria-label", "Next day");
     next.textContent = "›";
@@ -227,6 +237,7 @@
     header.className = "day-sheet-header";
     header.innerHTML = `<span>Jump to day</span>`;
     const closeBtn = document.createElement("button");
+    closeBtn.type = "button";
     closeBtn.className = "day-sheet-close";
     closeBtn.setAttribute("aria-label", "Close");
     closeBtn.textContent = "✕";
@@ -248,6 +259,7 @@
       }
 
       const rowBtn = document.createElement("button");
+      rowBtn.type = "button";
       rowBtn.className = "day-sheet-row" + (i === state.dayIndex ? " active" : "");
       const title = day.title.split("—").slice(1).join("—").trim() || day.title;
       rowBtn.innerHTML = `
@@ -1497,10 +1509,12 @@
     const jump = document.createElement("div");
     jump.className = "day-jump";
     const prevBtn = document.createElement("button");
+    prevBtn.type = "button";
     prevBtn.textContent = "← Previous day";
     prevBtn.disabled = state.dayIndex === 0;
     prevBtn.addEventListener("click", () => { state.dayIndex--; saveLastDay(state.dayIndex); render(); window.scrollTo(0,0); });
     const nextBtn = document.createElement("button");
+    nextBtn.type = "button";
     nextBtn.textContent = "Next day →";
     nextBtn.disabled = state.dayIndex === DAYS.length - 1;
     nextBtn.addEventListener("click", () => { state.dayIndex++; saveLastDay(state.dayIndex); render(); window.scrollTo(0,0); });
@@ -1956,6 +1970,7 @@
       .sort((a, b) => a.dayNumber - b.dayNumber)
       .forEach((v) => {
         const row = document.createElement("button");
+        row.type = "button";
         row.className = "tmp-goto tmp-visit";
         row.innerHTML = `<span class="tmp-visit-day">${mapPopupDayLabel(v.dayIndex)}${v.time ? " · " + v.time : ""}</span><span class="tmp-visit-label">${tripMapDotHtml(v.kind)}${v.label}</span>`;
         row.addEventListener("click", () => goToDayFn(v.dayIndex, v.num));
@@ -2253,6 +2268,7 @@
           const btn = L.DomUtil.create("a", "trip-map-locate-btn", el);
           btn.href = "#";
           btn.title = "Show my location";
+          btn.setAttribute("aria-label", "Show my location");
           btn.innerHTML = LOCATION_ICON_SVG;
           L.DomEvent.disableClickPropagation(el);
           L.DomEvent.on(btn, "click", (e) => {
@@ -2293,6 +2309,7 @@
           <div class="tmp-sub">${p.name}</div>
         `;
         const zoomBtn = document.createElement("button");
+        zoomBtn.type = "button";
         zoomBtn.className = "tmp-goto";
         zoomBtn.textContent = "Zoom in →";
         zoomBtn.addEventListener("click", () => {
@@ -2327,6 +2344,7 @@
           <div class="tmp-title">${tripMapDotHtml(p.kind)}${p.label}</div>
         `;
         const gotoBtn = document.createElement("button");
+        gotoBtn.type = "button";
         gotoBtn.className = "tmp-goto";
         gotoBtn.textContent = `Go to Day ${p.dayNumber} →`;
         gotoBtn.addEventListener("click", () => goToDay(p.dayIndex, p.num));
@@ -2506,6 +2524,7 @@
     DAYS.forEach((day, i) => {
       const tickets = TICKETS_BY_DATE[day.date] || [];
       const row = document.createElement("button");
+      row.type = "button";
       row.className = "tickets-day-row";
       const title = day.title.split("—").slice(1).join("—").trim() || day.title;
       row.innerHTML = `
@@ -2534,6 +2553,7 @@
     container.className = "tickets-view";
 
     const backBtn = document.createElement("button");
+    backBtn.type = "button";
     backBtn.className = "tickets-back";
     backBtn.textContent = "‹ All days";
     backBtn.addEventListener("click", () => {
@@ -2584,10 +2604,9 @@
   // browser-back/history confusion, and app.js/styles.css never unload --
   // a plain <a href="...pdf"> navigating away was losing all in-app state
   // and even visual styling when the user hit back to return. PDFs render
-  // via an <iframe> (the browser's native PDF viewer still supports
-  // pinch-zoom inside it); the two .jpg tickets via a plain <img>, relying
-  // on the page's own native pinch-zoom (the viewport meta tag doesn't
-  // restrict scaling).
+  // via an <embed> (see the fuller reasoning below); the two .jpg tickets
+  // via a plain <img>, relying on the page's own native pinch-zoom (the
+  // viewport meta tag doesn't restrict scaling).
   function renderTicketFileView(t) {
     const container = document.createElement("div");
     container.className = "ticket-file-view";
@@ -2737,13 +2756,16 @@
   // eventual <a> never gets torn in half by a bold/italic/paragraph
   // boundary landing mid-name.
   function linkifyPoiContent(poi) {
-    const { text: marked, refs } = markPoiReferences(poi.content, poi.id);
-    const html = mdLiteToHtml(marked).replace(/@@POIREF:([a-z0-9_]+)@@/g, (whole, id) => {
+    // Only the marked-up text is needed here -- markPoiReferences() also
+    // returns the ordered outgoing-refs list, but the caller builds "See
+    // also" from seeAlsoRefsFor() instead (outgoing + incoming), so that
+    // list would just go unused if kept here too.
+    const { text: marked } = markPoiReferences(poi.content, poi.id);
+    return mdLiteToHtml(marked).replace(/@@POIREF:([a-z0-9_]+)@@/g, (whole, id) => {
       const target = POI_BY_ID[id];
       if (!target) return "";
       return `<a href="#" class="wiki-inline-ref" data-poi-id="${id}">${escapeHtml(target.name)}</a>`;
     });
-    return { html, refs };
   }
 
   // "See also" is meant to be one-way-reference-proof: if entry A's
@@ -2862,7 +2884,7 @@
 
   function renderWikiEntryView(poi) {
     const container = document.createElement("div");
-    container.className = "wiki-view wiki-entry-view";
+    container.className = "wiki-view";
 
     const backBtn = document.createElement("button");
     backBtn.type = "button";
@@ -2904,7 +2926,7 @@
       window.scrollTo(0, 0);
     }
 
-    const { html: bodyHtml } = linkifyPoiContent(poi);
+    const bodyHtml = linkifyPoiContent(poi);
     const seeAlsoRefs = seeAlsoRefsFor(poi);
 
     const body = document.createElement("div");
@@ -3039,6 +3061,7 @@
     ];
     items.forEach((it) => {
       const btn = document.createElement("button");
+      btn.type = "button";
       btn.className = it.key === state.view ? "active" : "";
       btn.innerHTML = `<span class="bicon">${it.icon}</span><span>${it.label}</span>`;
       btn.addEventListener("click", () => {
@@ -3209,17 +3232,28 @@
     function loadNext() {
       if (nextIndex >= urls.length) return;
       const img = new Image();
+      // Image() has no built-in load timeout -- onload/onerror simply
+      // never fire for a request that hangs (rather than cleanly
+      // failing), which without this fallback would leave `remaining`
+      // stuck above 0 forever: the "done" flag never gets set, and every
+      // future page load re-attempts the *entire* prefetch from scratch.
+      // settledOnce guards against double-counting if the real
+      // onload/onerror still fires later, after the fallback already ran.
+      let settledOnce = false;
+      function settle() {
+        if (settledOnce) return;
+        settledOnce = true;
+        remaining--;
+        if (remaining <= 0) {
+          try { localStorage.setItem(MAP_PREFETCH_KEY, MAP_PREFETCH_VERSION); } catch (e) {}
+        } else {
+          loadNext();
+        }
+      }
+      setTimeout(settle, 20000);
       img.onload = settle;
       img.onerror = settle;
       img.src = urls[nextIndex++];
-    }
-    function settle() {
-      remaining--;
-      if (remaining <= 0) {
-        try { localStorage.setItem(MAP_PREFETCH_KEY, MAP_PREFETCH_VERSION); } catch (e) {}
-      } else {
-        loadNext();
-      }
     }
     for (let c = 0; c < Math.min(CONCURRENCY, urls.length); c++) loadNext();
   }
@@ -3228,7 +3262,32 @@
 
   if ("serviceWorker" in navigator) {
     window.addEventListener("load", () => {
-      navigator.serviceWorker.register("./sw.js").catch(() => {});
+      navigator.serviceWorker.register("./sw.js").then((reg) => {
+        // register() alone relies on the browser's own update-check
+        // schedule, which iOS Safari (especially an installed/home-
+        // screen PWA) can be slow or inconsistent about -- an app fix can
+        // sit deployed for a long time before it's actually picked up.
+        // Forcing an explicit check on every load makes that immediate
+        // instead of best-effort.
+        reg.update().catch(() => {});
+      }).catch(() => {});
+
+      // A new service worker activating (skipWaiting + clients.claim(),
+      // both already used in sw.js) makes it start controlling THIS page
+      // too, but doesn't retroactively re-run anything already loaded
+      // under the old one -- app.js/styles.css/data.js already in memory
+      // stay whatever version they were when the page loaded. Reloading
+      // once when control actually switches is what makes an update
+      // fully take effect right away instead of only on some later,
+      // unrelated reload. Guarded so this can only ever fire once per
+      // page load, not loop.
+      let reloadedForUpdate = false;
+      navigator.serviceWorker.addEventListener("controllerchange", () => {
+        if (reloadedForUpdate) return;
+        reloadedForUpdate = true;
+        window.location.reload();
+      });
+
       // Wait until the service worker actually controls this page --
       // register() alone doesn't guarantee that yet, especially on a
       // first-ever visit -- so these tile fetches are actually

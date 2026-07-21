@@ -54,7 +54,27 @@ still dependency-free vanilla JS.
   since it's an uncredentialed cross-origin image load) as cacheable too,
   not just a real same-origin `200` — otherwise map tiles are silently
   never cached at all and the map goes blank offline even after being
-  viewed online
+  viewed online. The `install` handler caches each `ASSETS` entry
+  individually (`cache.add()` per URL, each wrapped in its own `.catch()`)
+  rather than `cache.addAll(ASSETS)` — `addAll` is all-or-nothing, so one
+  asset failing to fetch (a flaky edge/CDN blip during deploy) rejects the
+  *entire* install silently, with no error surfaced anywhere, permanently
+  stranding the app on the old service worker with no future retry (a
+  failed install never reaches `activate`). On the `app.js` side,
+  `reg.update()` is called explicitly after every `register()` (don't
+  rely solely on the browser's own update-check schedule — iOS Safari,
+  especially for an installed/home-screen PWA, can be slow/inconsistent
+  about noticing a new `sw.js`), and a `controllerchange` listener
+  reloads the page exactly once when a new service worker actually takes
+  over, since activating a new worker doesn't retroactively change
+  already-loaded `app.js`/`styles.css` in memory — without the reload, an
+  update could sit fully installed and active but not actually change
+  anything the user sees until some later, unrelated reload happened to
+  occur. If a device is already stuck on a stale version from *before*
+  this reload logic existed, this fix can't retroactively save it (the
+  old, stuck code doesn't know to check more aggressively or reload on
+  its own) — that one time needs a manual reset: delete and re-add the
+  home-screen icon, or clear the site's data in Safari settings.
 - `icons/` — app icons (`icon-192.png`, `icon-512.png`, `favicon-32.png`),
   plus `favicon.ico` (multi-resolution, 16/32/48/64px) in the repo root.
   All four share one design: the Swedish flag (blue `#006AA7` field, yellow
@@ -70,6 +90,14 @@ still dependency-free vanilla JS.
 - `favicon.ico` — see `icons/` above; referenced via `<link rel="icon">`
   in `index.html` alongside `icons/favicon-32.png` for browsers that
   prefer a PNG favicon
+- `manifest.json`'s `background_color`/`theme_color` must match the
+  app's actual palette (`--bg` `#f6f4ee` / accent `#35576b`, same as
+  `index.html`'s `<meta name="theme-color">`) — `background_color`
+  specifically is what paints the blank splash screen the OS shows for
+  an instant while an installed/home-screen PWA is launching, before the
+  page itself has rendered anything, so a mismatched value shows up as a
+  visible flash of the wrong color on every launch, not just an unused
+  config field
 - `assets/fonts/` — self-hosted DM Sans woff2 files (normal + italic, latin +
   latin-ext), loaded via `@font-face` in `styles.css` so the app works fully
   offline with no Google Fonts dependency
