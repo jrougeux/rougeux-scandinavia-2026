@@ -1576,6 +1576,12 @@
   }
   const SEARCH_INDEX = buildSearchIndex();
 
+  // Survives navigating away from and back to the Search view (in-memory
+  // only, resets on a full page reload -- same pattern as tripMapPersisted/
+  // dayViewScrollY below) so tapping a result and returning via the bottom
+  // nav doesn't reset the query and results back to empty.
+  let searchQueryPersisted = "";
+
   function renderSearchView() {
     const container = document.createElement("div");
     container.className = "search-view";
@@ -1585,10 +1591,12 @@
     input.type = "search";
     input.placeholder = "Search activities, restaurants, confirmations…";
     input.autofocus = true;
+    input.value = searchQueryPersisted;
 
     const results = document.createElement("div");
 
     function runSearch(q) {
+      searchQueryPersisted = q;
       results.innerHTML = "";
       const query = normalizeForSearch(q.trim());
       if (!query) {
@@ -1626,7 +1634,7 @@
     }
 
     input.addEventListener("input", () => runSearch(input.value));
-    runSearch("");
+    runSearch(searchQueryPersisted);
 
     container.appendChild(input);
     container.appendChild(results);
@@ -2686,11 +2694,138 @@
     lastRenderedView = state.view;
   }
 
+  // ---------------- Map tile prefetch (offline-ready without browsing first) ----------------
+  // Opportunistic per-tile caching (see sw.js's fetch handler) only saves
+  // a tile once a user has actually scrolled it into view -- fine for
+  // casual browsing, but means the map goes blank in airplane mode
+  // anywhere not already visited. This proactively fetches (and, via that
+  // same fetch handler, gets cached into RUNTIME_CACHE_NAME) tiles for the
+  // views a user hits without any panning: each lodging city at the
+  // per-day map's default zoom, and the whole trip's overview at its
+  // minimum zoom. Deliberately doesn't try to cover arbitrary
+  // panning/zooming beyond a small buffer -- that's effectively "all of
+  // Scandinavia at every zoom level," far too much data for a background
+  // prefetch.
+  const MAP_PREFETCH_VERSION = "v1"; // bump to force a re-run (e.g. if lodging locations change)
+  const MAP_PREFETCH_KEY = "rougeux_map_tiles_prefetched";
+  const MAP_PREFETCH_OVERVIEW_ZOOMS = [MAP_MIN_ZOOM, MAP_MIN_ZOOM + 1];
+  // Bigger than the 640x320 per-day map canvas -- the trip-wide Leaflet
+  // map's "fly into this city" view (see TRIP_MAP_DETAIL_MIN_ZOOM) can
+  // fill a full-screen viewport, so this covers that too, not just the
+  // per-day map card.
+  const MAP_PREFETCH_CITY_VIEWPORT = 900;
+
+  function uniqueLodgingPoints() {
+    const seen = new Set();
+    const points = [];
+    LODGING.forEach((l) => {
+      if (typeof l.lat !== "number" || typeof l.lon !== "number") return;
+      const key = l.lat.toFixed(4) + "," + l.lon.toFixed(4);
+      if (seen.has(key)) return;
+      seen.add(key);
+      points.push([l.lat, l.lon]);
+    });
+    return points;
+  }
+
+  function tileUrlsForRange(zoom, txStart, txEnd, tyStart, tyEnd) {
+    const n = Math.pow(2, zoom);
+    const urls = [];
+    for (let tx = txStart; tx <= txEnd; tx++) {
+      for (let ty = tyStart; ty <= tyEnd; ty++) {
+        if (ty < 0 || ty >= n) continue;
+        const wrappedX = ((tx % n) + n) % n;
+        urls.push(`https://tile.openstreetmap.org/${zoom}/${wrappedX}/${ty}.png`);
+      }
+    }
+    return urls;
+  }
+
+  function tileUrlsForViewport(lat, lon, zoom, pxSize, bufferTiles) {
+    const center = lonLatToTilePixel(lat, lon, zoom);
+    const half = pxSize / 2;
+    return tileUrlsForRange(
+      zoom,
+      Math.floor((center.x - half) / MAP_TILE_SIZE) - bufferTiles,
+      Math.floor((center.x + half) / MAP_TILE_SIZE) + bufferTiles,
+      Math.floor((center.y - half) / MAP_TILE_SIZE) - bufferTiles,
+      Math.floor((center.y + half) / MAP_TILE_SIZE) + bufferTiles
+    );
+  }
+
+  function tileUrlsForBounds(points, zoom, bufferTiles) {
+    const pixels = points.map(([lat, lon]) => lonLatToTilePixel(lat, lon, zoom));
+    return tileUrlsForRange(
+      zoom,
+      Math.floor(Math.min(...pixels.map((p) => p.x)) / MAP_TILE_SIZE) - bufferTiles,
+      Math.floor(Math.max(...pixels.map((p) => p.x)) / MAP_TILE_SIZE) + bufferTiles,
+      Math.floor(Math.min(...pixels.map((p) => p.y)) / MAP_TILE_SIZE) - bufferTiles,
+      Math.floor(Math.max(...pixels.map((p) => p.y)) / MAP_TILE_SIZE) + bufferTiles
+    );
+  }
+
+  function buildMapPrefetchUrls() {
+    const points = uniqueLodgingPoints();
+    if (!points.length) return [];
+    const urls = new Set();
+    points.forEach(([lat, lon]) => {
+      tileUrlsForViewport(lat, lon, MAP_DEFAULT_ZOOM, MAP_PREFETCH_CITY_VIEWPORT, 1).forEach((u) => urls.add(u));
+    });
+    MAP_PREFETCH_OVERVIEW_ZOOMS.forEach((zoom) => {
+      tileUrlsForBounds(points, zoom, 1).forEach((u) => urls.add(u));
+    });
+    return Array.from(urls);
+  }
+
+  // Best-effort, low-priority background fetch: a bounded number of tile
+  // requests run concurrently (politer to the tile server and the
+  // device's network than firing hundreds at once), and the prefetch is
+  // only marked "done" in localStorage once every tile has resolved
+  // (success or failure) -- so an interrupted first run (e.g. the tab
+  // closed early) retries in full next time instead of silently staying
+  // incomplete forever.
+  function prefetchMapTiles() {
+    if (navigator.onLine === false) return;
+    try {
+      if (localStorage.getItem(MAP_PREFETCH_KEY) === MAP_PREFETCH_VERSION) return;
+    } catch (e) {}
+
+    const urls = buildMapPrefetchUrls();
+    if (!urls.length) return;
+
+    let nextIndex = 0;
+    let remaining = urls.length;
+    const CONCURRENCY = 6;
+
+    function loadNext() {
+      if (nextIndex >= urls.length) return;
+      const img = new Image();
+      img.onload = settle;
+      img.onerror = settle;
+      img.src = urls[nextIndex++];
+    }
+    function settle() {
+      remaining--;
+      if (remaining <= 0) {
+        try { localStorage.setItem(MAP_PREFETCH_KEY, MAP_PREFETCH_VERSION); } catch (e) {}
+      } else {
+        loadNext();
+      }
+    }
+    for (let c = 0; c < Math.min(CONCURRENCY, urls.length); c++) loadNext();
+  }
+
   render();
 
   if ("serviceWorker" in navigator) {
     window.addEventListener("load", () => {
       navigator.serviceWorker.register("./sw.js").catch(() => {});
+      // Wait until the service worker actually controls this page --
+      // register() alone doesn't guarantee that yet, especially on a
+      // first-ever visit -- so these tile fetches are actually
+      // intercepted and cached by its fetch handler, not just loaded
+      // straight from the network and discarded.
+      navigator.serviceWorker.ready.then(prefetchMapTiles).catch(() => {});
     });
   }
 })();

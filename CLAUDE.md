@@ -34,12 +34,27 @@ still dependency-free vanilla JS.
 - `app.js` — all rendering/routing logic, vanilla JS, no framework
 - `styles.css` — design system (CSS custom properties at the top of the file)
 - `manifest.json` + `sw.js` — PWA manifest and service worker for offline/
-  "Add to Home Screen" support. `sw.js` caches assets cache-first under
-  `CACHE_NAME`. **Bump `CACHE_NAME` (e.g. v7 → v8) any time app.js/styles.css/
-  data.js/poi_data.js/index.html change** — otherwise the browser won't detect `sw.js`
-  as changed, won't install a new service worker, and silently keeps
-  serving the old cached files even after a normal reload (a hard
-  refresh / cache clear is needed to recover without a version bump)
+  "Add to Home Screen" support. `sw.js` caches assets cache-first, split
+  across two cache stores: `CACHE_NAME` holds the precached `ASSETS` app
+  shell (index.html/app.js/styles.css/data.js/poi_data.js/icons/fonts/
+  Leaflet), while `RUNTIME_CACHE_NAME` (`"rougeux-trip-runtime"`, never
+  version-bumped) holds everything the fetch handler opportunistically
+  caches at runtime — map tiles and ticket PDFs/JPGs. **Bump `CACHE_NAME`
+  (e.g. v7 → v8) any time app.js/styles.css/data.js/poi_data.js/
+  index.html change** — otherwise the browser won't detect `sw.js` as
+  changed, won't install a new service worker, and silently keeps serving
+  the old cached files even after a normal reload (a hard refresh / cache
+  clear is needed to recover without a version bump). `RUNTIME_CACHE_NAME`
+  is deliberately a separate, un-bumped store: `activate` only deletes
+  caches that match *neither* name, so a map tile or ticket the user
+  already has offline survives every future `CACHE_NAME` bump instead of
+  being wiped and needing a fresh download on the next deploy. The fetch
+  handler treats a cross-origin "opaque" response (`type === "opaque"`,
+  `status` forced to `0` — what every OpenStreetMap tile request gets,
+  since it's an uncredentialed cross-origin image load) as cacheable too,
+  not just a real same-origin `200` — otherwise map tiles are silently
+  never cached at all and the map goes blank offline even after being
+  viewed online
 - `icons/` — app icons (`icon-192.png`, `icon-512.png`, `favicon-32.png`),
   plus `favicon.ico` (multi-resolution, 16/32/48/64px) in the repo root.
   All four share one design: the Swedish flag (blue `#006AA7` field, yellow
@@ -133,6 +148,22 @@ Defined as CSS custom properties in `styles.css` (`:root`):
   opens the location in Google Maps. See `renderMapSection()` in `app.js`.
   Tiles are only fetched the first time a day's Map section is opened (lazy,
   via `renderCollapsible()`'s `onFirstOpen` hook), not on every render.
+- On first load (once the service worker actually controls the page --
+  see `navigator.serviceWorker.ready` in the bootstrap at the bottom of
+  `app.js`), `prefetchMapTiles()` proactively downloads map tiles for the
+  region actually being visited, so offline map viewing works without
+  requiring the user to have manually browsed every area first: each
+  unique lodging city at the per-day map's default zoom (`MAP_DEFAULT_ZOOM`,
+  sized to a generous viewport so it also covers the trip map's "fly into
+  this city" view, not just the per-day map card), plus the whole trip's
+  bounding box at its minimum zoom for the overview. ~310 tiles / a few MB
+  total as of the current lodging list — deliberately bounded to actual
+  default views, not "every zoom level of all of Scandinavia." Runs once
+  (a `localStorage` flag under `MAP_PREFETCH_VERSION`, bump that constant
+  to force a re-run e.g. after lodging locations change), skips entirely
+  if `navigator.onLine === false`, and only marks itself done after every
+  queued tile settles (success or failure) so an interrupted first run
+  retries in full next time rather than silently staying incomplete.
 - Individual logistics legs (Logistics list) and dining candidates (Dining
   options) each get a "📍 View on map" or "🚶 Walking directions" link where a
   real location is known — see `mapLinkForLeg()`. These use Google Maps

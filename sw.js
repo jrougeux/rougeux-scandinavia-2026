@@ -1,4 +1,12 @@
-const CACHE_NAME = "rougeux-trip-v40";
+const CACHE_NAME = "rougeux-trip-v42";
+// Holds everything fetched at runtime and not part of the precached shell
+// below: map tiles (per-day canvas renderer and the trip-wide Leaflet
+// map, including the proactive prefetch in app.js) and ticket PDFs/JPGs.
+// Deliberately NOT versioned/bumped like CACHE_NAME -- activate below
+// only deletes caches that don't match either name, so a tile or ticket
+// the user already has offline survives every future app update instead
+// of being wiped and needing a fresh download each time CACHE_NAME bumps.
+const RUNTIME_CACHE_NAME = "rougeux-trip-runtime";
 const ASSETS = [
   "./",
   "./index.html",
@@ -33,7 +41,9 @@ self.addEventListener("install", (event) => {
 self.addEventListener("activate", (event) => {
   event.waitUntil(
     caches.keys().then((keys) =>
-      Promise.all(keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k)))
+      Promise.all(
+        keys.filter((k) => k !== CACHE_NAME && k !== RUNTIME_CACHE_NAME).map((k) => caches.delete(k))
+      )
     ).then(() => self.clients.claim())
   );
 });
@@ -43,9 +53,21 @@ self.addEventListener("fetch", (event) => {
     caches.match(event.request).then((cached) => {
       if (cached) return cached;
       return fetch(event.request).then((response) => {
-        if (response && response.status === 200 && event.request.method === "GET") {
+        // Cross-origin requests without CORS (e.g. the OpenStreetMap tile
+        // <img>/Image() fetches both map renderers use) always come back
+        // "opaque" -- status is forced to 0 and type to "opaque" so the
+        // page can't introspect a cross-origin response, even on success.
+        // The original `status === 200` check only ever matched same-
+        // origin app assets, so map tiles were silently never cached and
+        // the map went blank offline even after being viewed online.
+        // Opaque responses are cached on faith (a failed/blocked request
+        // also looks opaque, so an errored tile could get cached too) --
+        // an acceptable trade-off for map tiles specifically.
+        const cacheable = response && event.request.method === "GET" &&
+          (response.status === 200 || response.type === "opaque");
+        if (cacheable) {
           const copy = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
+          caches.open(RUNTIME_CACHE_NAME).then((cache) => cache.put(event.request, copy));
         }
         return response;
       }).catch(() => cached);
