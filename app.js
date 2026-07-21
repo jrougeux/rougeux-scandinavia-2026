@@ -116,6 +116,14 @@
     return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
   }
 
+  // "July 22, 2026" -- full month name + year, for the header banner's
+  // trip date range (DATA.meta.start_date/end_date are plain ISO
+  // strings like "2026-07-22").
+  function fmtFullDate(isoDate) {
+    const d = new Date(isoDate + "T00:00:00");
+    return d.toLocaleDateString(undefined, { month: "long", day: "numeric", year: "numeric" });
+  }
+
   // "Wed, Jul 29" -- used in trip-map popups instead of a bare "Day N",
   // since a day number means nothing without opening the day-jump sheet
   // to translate it, whereas a weekday+date is meaningful on its own.
@@ -142,6 +150,13 @@
   }
 
   function goToDay(i, legNum, diningIndex) {
+    // When landing at the top (no specific leg/dining target), scroll
+    // *before* rebuilding the DOM -- the old content is still on screen
+    // and full-size at that point, so the jump is safe. When there IS a
+    // target, we need the new Day view's real DOM to exist first in
+    // order to find and scroll to that specific element, so render()
+    // has to come first there instead.
+    if (legNum == null && diningIndex == null) window.scrollTo(0, 0);
     state.dayIndex = i;
     state.view = "day";
     saveLastDay(i);
@@ -470,7 +485,17 @@
       if (e.touches.length === 2 && pinchStartDist) {
         e.preventDefault();
         pinchScale = touchDist(e.touches) / pinchStartDist;
-        const clamped = Math.min(Math.max(pinchScale, 0.4), 3);
+        let clamped = Math.min(Math.max(pinchScale, 0.4), 3);
+        // Already at the zoom limit in this direction -- endPinch() below
+        // will clamp the resulting zoom level right back to where it
+        // started, so scaling the canvas up/down here first would just
+        // be a "false" preview of a zoom change that's not actually
+        // going to happen, then snap back once the gesture ends.
+        // Freezing the visual scale at 1 (no-op) instead makes the map
+        // correctly not respond to further zoom-in/out gestures once
+        // already at MAP_MAX_ZOOM/MAP_MIN_ZOOM.
+        if (pinchStartZoom >= MAP_MAX_ZOOM) clamped = Math.min(clamped, 1);
+        if (pinchStartZoom <= MAP_MIN_ZOOM) clamped = Math.max(clamped, 1);
         canvas.style.transform = `scale(${clamped})`;
       }
     }, { passive: false });
@@ -1512,12 +1537,12 @@
     prevBtn.type = "button";
     prevBtn.textContent = "← Previous day";
     prevBtn.disabled = state.dayIndex === 0;
-    prevBtn.addEventListener("click", () => { state.dayIndex--; saveLastDay(state.dayIndex); render(); window.scrollTo(0,0); });
+    prevBtn.addEventListener("click", () => { window.scrollTo(0, 0); state.dayIndex--; saveLastDay(state.dayIndex); render(); });
     const nextBtn = document.createElement("button");
     nextBtn.type = "button";
     nextBtn.textContent = "Next day →";
     nextBtn.disabled = state.dayIndex === DAYS.length - 1;
-    nextBtn.addEventListener("click", () => { state.dayIndex++; saveLastDay(state.dayIndex); render(); window.scrollTo(0,0); });
+    nextBtn.addEventListener("click", () => { window.scrollTo(0, 0); state.dayIndex++; saveLastDay(state.dayIndex); render(); });
     jump.appendChild(prevBtn);
     jump.appendChild(nextBtn);
     container.appendChild(jump);
@@ -1603,7 +1628,7 @@
     const input = document.createElement("input");
     input.className = "search-input";
     input.type = "search";
-    input.placeholder = "Search activities, restaurants, confirmations…";
+    input.placeholder = "Search the itinerary…";
     input.autofocus = true;
     input.value = searchQueryPersisted;
 
@@ -1933,10 +1958,10 @@
   // tripMapPersisted mechanism that restores state when navigating back
   // to the Map tab, since "go to this exact pin" is the same operation.
   function goToMapPin(key, lat, lon) {
+    window.scrollTo(0, 0);
     tripMapPersisted = { center: [lat, lon], zoom: 15, openPopupKey: key };
     state.view = "map";
     render();
-    window.scrollTo(0, 0);
   }
 
   function categoryMapColor(kind) {
@@ -2383,10 +2408,10 @@
         learnBtn.className = "tmp-goto";
         learnBtn.textContent = "Learn more →";
         learnBtn.addEventListener("click", () => {
+          window.scrollTo(0, 0);
           state.view = "wiki";
           state.wikiEntryId = p.id;
           render();
-          window.scrollTo(0, 0);
         });
         popupEl.appendChild(learnBtn);
         marker.bindPopup(popupEl);
@@ -2532,9 +2557,9 @@
         <span class="tdr-count">${tickets.length ? tickets.length : "–"}</span>
       `;
       row.addEventListener("click", () => {
+        window.scrollTo(0, 0);
         state.ticketsDayIndex = i;
         render();
-        window.scrollTo(0, 0);
       });
       list.appendChild(row);
     });
@@ -2552,9 +2577,9 @@
     backBtn.className = "tickets-back";
     backBtn.textContent = "‹ All days";
     backBtn.addEventListener("click", () => {
+      window.scrollTo(0, 0);
       state.ticketsDayIndex = null;
       render();
-      window.scrollTo(0, 0);
     });
     container.appendChild(backBtn);
 
@@ -2585,9 +2610,9 @@
       const label = t.time24 ? `${t.description} - ${formatTicketTime(t.time24)}` : t.description;
       row.innerHTML = `<span class="ticket-icon">${icon}</span><span class="ticket-label">${label}</span>`;
       row.addEventListener("click", () => {
+        window.scrollTo(0, 0);
         state.ticketFile = t;
         render();
-        window.scrollTo(0, 0);
       });
       list.appendChild(row);
     });
@@ -2829,9 +2854,9 @@
     container.appendChild(list);
 
     function openEntry(poi) {
+      window.scrollTo(0, 0);
       state.wikiEntryId = poi.id;
       render();
-      window.scrollTo(0, 0);
     }
 
     function renderRows(pois) {
@@ -2886,9 +2911,9 @@
     backBtn.className = "tickets-back";
     backBtn.textContent = "‹ All entries";
     backBtn.addEventListener("click", () => {
+      window.scrollTo(0, 0);
       state.wikiEntryId = null;
       render();
-      window.scrollTo(0, 0);
     });
     container.appendChild(backBtn);
 
@@ -2916,9 +2941,9 @@
     function openReferencedEntry(id) {
       const target = POI_BY_ID[id];
       if (!target) return;
+      window.scrollTo(0, 0);
       state.wikiEntryId = target.id;
       render();
-      window.scrollTo(0, 0);
     }
 
     const bodyHtml = linkifyPoiContent(poi);
@@ -3033,8 +3058,8 @@
     header.className = "app-header";
     header.innerHTML = `
       <div class="app-banner">
-        <p class="app-title">${DATA.meta.family_name} Family — ${DATA.meta.trip_title}</p>
-        <p class="app-subtitle">${DATA.meta.start_date} → ${DATA.meta.end_date}</p>
+        <p class="app-title">${DATA.meta.family_name} Family Itinerary 🇸🇪<span class="app-title-flag-gap">🇳🇴</span></p>
+        <p class="app-subtitle">${fmtFullDate(DATA.meta.start_date)} - ${fmtFullDate(DATA.meta.end_date)}</p>
       </div>
     `;
     if (state.view === "day") {
@@ -3061,10 +3086,20 @@
       btn.innerHTML = `<span class="bicon">${it.icon}</span><span>${it.label}</span>`;
       btn.addEventListener("click", () => {
         const wasDay = state.view === "day";
+        // Scroll *before* tearing down/rebuilding the DOM wherever the
+        // target is a fixed position (0,0) -- the old (still full-size)
+        // content is still on screen at that point, so the jump is safe.
+        // Restoring dayViewScrollY has to happen after render() instead,
+        // since it needs the Day view's real (taller) content height to
+        // exist first. Scrolling only after render() (the old approach)
+        // meant a brief window where the new, often shorter, content
+        // existed at the old scroll offset -- an out-of-bounds position
+        // the browser would clamp, sometimes visibly (a flash) before
+        // our own scrollTo(0,0) corrected it a moment later.
+        if (it.key !== "day") window.scrollTo(0, 0);
         state.view = it.key;
         render();
         if (it.key === "day" && !wasDay) window.scrollTo(0, dayViewScrollY);
-        else if (it.key !== "day") window.scrollTo(0, 0);
         // else: redundant click on the already-active Day tab -- leave
         // scroll exactly where it is rather than yanking to a stale value.
       });

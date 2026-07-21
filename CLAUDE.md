@@ -152,8 +152,8 @@ Defined as CSS custom properties in `styles.css` (`:root`):
   "jump to day" sheet (grouped by city, flag per day) — same pattern on
   mobile and desktop, no separate dot-strip nav
 - The top masthead (`.app-banner` in `renderHeader()`) is a solid
-  `--accent`-colored band, centered, white text — not plain text on the
-  page background. Its own `padding-top` absorbs
+  `--accent-light`-colored band, centered, white text — not plain text on
+  the page background. Its own `padding-top` absorbs
   `env(safe-area-inset-top)` (the iPhone status bar's time/cell/wifi
   icons, relevant only when installed to the home screen as a standalone
   app — a regular browser tab gets `env() = 0`, a no-op) so the total
@@ -165,6 +165,57 @@ Defined as CSS custom properties in `styles.css` (`:root`):
   bar) stays outside `.app-banner`, on the header's normal light
   background, unaffected by this — it's a separate functional element
   that only appears on the Day view, not part of the masthead itself.
+  The banner has two lines: `"{family_name} Family Itinerary 🇸🇪🇳🇴"`
+  (`.app-title`), then a subtitle (`.app-subtitle`) with the trip's date
+  range formatted via `fmtFullDate()` (full month name + year, e.g.
+  `"July 22, 2026 - August 6, 2026"`, derived from
+  `DATA.meta.start_date`/`end_date` rather than hand-typed, same
+  data-driven approach as the rest of the app). The two flag emoji have a
+  deliberate 2px gap between them (`.app-title-flag-gap`, a `<span>`
+  wrapping just the second flag with `margin-left: 2px` — plain emoji
+  characters in the text have no room to add spacing between otherwise).
+  `--accent-light` (`#569090`, defined right next to `--accent` `#35576b`
+  in `:root`) is a color explicitly chosen apart from `--accent` — more
+  teal/lighter — specifically so the 🇸🇪 flag emoji's own vivid,
+  saturated blue reads as visually distinct against the banner instead of
+  blending into it. `index.html`'s `<meta name="theme-color">` and
+  `manifest.json`'s `theme_color` are kept in sync with this value (not
+  `--accent`) for the same reason `background_color` has to match `--bg`
+  — a mismatch between the banner and the OS-level chrome tint (status
+  bar / task switcher) reads as a visible inconsistency, not a subtlety.
+- `.day-nav-outer` (the day-nav arrows + progress bar, both wrapped in
+  it) has `padding: 0 16px` so the `‹`/`›` arrows aren't flush against
+  the screen edges — matches the ~16px side padding every other view's
+  container already uses (`.search-view`, `.wiki-view`, etc.).
+- Nearly every navigation action in `app.js` (any place that changes
+  `state.view`/`state.dayIndex`/etc., calls `render()`, and then wants
+  the page at the top) calls `window.scrollTo(0, 0)` **before** `render()`
+  now, not after — e.g. `goToDay()` (when it has no specific leg/dining
+  target), `goToMapPin()`, the bottom nav, the day-jump prev/next
+  buttons, Wiki/Tickets navigation. `render()` does `root.innerHTML = ""`
+  then rebuilds synchronously, and the new content is very often a
+  different height than the old (e.g. a shorter day, or switching from
+  Day to a shorter view) — scrolling *after* that swap meant there was a
+  moment where the new (often shorter) content existed at the *old*
+  scroll offset, an out-of-bounds position the browser has to clamp,
+  which was visible as a brief flash on real devices before the app's
+  own `scrollTo(0, 0)` corrected it a moment later. Scrolling first,
+  while the old (still full-height) content is still on screen, avoids
+  that mismatch entirely. The one case that still scrolls *after*
+  render() is restoring `dayViewScrollY` when returning to Day view from
+  elsewhere (bottom nav) — that needs Day view's real, often-taller
+  content to exist first to land at the right offset; same story for
+  `goToDay(dayIndex, legNum, ...)` with an actual leg/dining target, which
+  needs the new DOM to exist before it can even find that element.
+- Nearly every clickable element gets `opacity: 0.6` on `:active` via a
+  broad, low-specificity baseline rule (`button:active, a[href]:active`
+  near the top of `styles.css`, right after the base `button` rule) —
+  deliberately low specificity so any more specific existing `:active`
+  rule elsewhere (e.g. a `background-color` swap) still applies *in
+  addition to* this, not instead of it; the two compose rather than
+  conflict since they touch different properties. `.checklist-item`
+  (a `<label>`, not a `button`/`a`, so the broad rule doesn't reach it)
+  has its own explicit `:active` rule for the same reason.
 - Logistics legs are color-coded by category (lodging, transport, walking,
   dining, activity, note) via a left border stripe + tinted chip + emoji;
   see `categorizeLeg()` in `app.js` — every leg gets exactly one category,
@@ -176,6 +227,15 @@ Defined as CSS custom properties in `styles.css` (`:root`):
   opens the location in Google Maps. See `renderMapSection()` in `app.js`.
   Tiles are only fetched the first time a day's Map section is opened (lazy,
   via `renderCollapsible()`'s `onFirstOpen` hook), not on every render.
+  Pinch-to-zoom on this canvas is hand-rolled (`touchmove`/`endPinch()`
+  in `renderMapSection()`), and clamps the *visual* CSS `scale()` preview
+  to `1` (no-op) once already at `MAP_MIN_ZOOM`/`MAP_MAX_ZOOM` in that
+  direction — without this, pinching further at the zoom limit still
+  visually scaled the canvas up/down during the gesture (a "false zoom"
+  preview of a change that was never going to happen, since `endPinch()`
+  clamps the resulting zoom level right back to where it started), then
+  snapped back once the gesture ended. The +/- buttons were never
+  affected (they already check/disable at the limits directly).
 - On first load (once the service worker actually controls the page --
   see `navigator.serviceWorker.ready` in the bootstrap at the bottom of
   `app.js`), `prefetchMapTiles()` proactively downloads map tiles for the

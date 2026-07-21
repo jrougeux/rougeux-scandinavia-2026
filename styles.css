@@ -50,6 +50,11 @@
 
   /* Trip-progress accent (not tied to any single category or country) */
   --accent: #35576b;
+  /* Top masthead banner only, explicitly chosen to sit apart from
+     --accent -- lighter/more teal so the 🇸🇪 flag emoji's own vivid,
+     saturated blue reads as visually distinct against the banner behind
+     it rather than blending in. */
+  --accent-light: #569090;
 
   /* Activity category color-coding -- more saturated + more hue separation
      than the original muted set, so categories read apart at a glance both
@@ -96,6 +101,15 @@ button {
   cursor: pointer;
   touch-action: manipulation;
 }
+/* Baseline tap feedback for every clickable element, so nothing feels
+   unresponsive even where there's no bespoke :active treatment. Low
+   specificity (bare element selectors) so any more specific existing
+   :active rule elsewhere (e.g. a background-color change) still applies
+   on top of this, not instead of it. */
+button:active,
+a[href]:active {
+  opacity: 0.6;
+}
 button:focus-visible,
 [tabindex]:focus-visible,
 input:focus-visible {
@@ -122,7 +136,7 @@ input:focus-visible {
    read correctly against it. Kept to the same total padding as the old
    .app-header so this doesn't grow the header's footprint. */
 .app-banner {
-  background: var(--accent);
+  background: var(--accent-light);
   /* Own padding trimmed ~10% from the original 14px/10px -- only our own
      contribution, not the env() safe-area itself, which is a real OS-
      measured value (the iPhone status bar / notch or Dynamic Island
@@ -139,6 +153,7 @@ input:focus-visible {
   color: #fff;
   margin: 0 0 2px;
 }
+.app-title-flag-gap { margin-left: 2px; }
 
 .app-subtitle {
   font-family: var(--font-mono);
@@ -150,6 +165,7 @@ input:focus-visible {
 /* ---------- Day nav (arrows + jump sheet, all screen sizes) ---------- */
 .day-nav-outer {
   margin-top: 8px;
+  padding: 0 16px;
   max-width: 640px;
   margin-left: auto;
   margin-right: auto;
@@ -1448,6 +1464,7 @@ input:focus-visible {
   margin-bottom: 8px;
   touch-action: manipulation;
 }
+.checklist-item:active { background: var(--surface-2); }
 .checklist-item input[type="checkbox"] {
   margin-top: 2px;
   width: 20px;
