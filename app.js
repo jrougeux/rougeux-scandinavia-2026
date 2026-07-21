@@ -3131,16 +3131,31 @@
   // a tile once a user has actually scrolled it into view -- fine for
   // casual browsing, but means the map goes blank in airplane mode
   // anywhere not already visited. This proactively fetches (and, via that
-  // same fetch handler, gets cached into RUNTIME_CACHE_NAME) tiles for the
-  // views a user hits without any panning: each lodging city at the
-  // per-day map's default zoom, and the whole trip's overview at its
-  // minimum zoom. Deliberately doesn't try to cover arbitrary
-  // panning/zooming beyond a small buffer -- that's effectively "all of
-  // Scandinavia at every zoom level," far too much data for a background
-  // prefetch.
-  const MAP_PREFETCH_VERSION = "v1"; // bump to force a re-run (e.g. if lodging locations change)
+  // same fetch handler, gets cached into RUNTIME_CACHE_NAME) tiles for
+  // the views a user hits without any panning.
+  //
+  // Covers two zoom ranges, stitched together so there's no gap a normal
+  // zoom gesture could land in and hit blank tiles:
+  //  - MAP_PREFETCH_OVERVIEW_ZOOMS: the *whole trip's* bounding box, at
+  //    zoom levels low enough that one fetch covers every city at once
+  //    cheaply (tile count roughly doubles per zoom level here, and
+  //    explodes well before city-block detail, so this only goes up to
+  //    zoom 9 -- beyond that the per-city viewport approach below is far
+  //    cheaper for the same detail level).
+  //  - MAP_PREFETCH_CITY_VIEWPORT_ZOOMS: each lodging city individually,
+  //    at a *fixed pixel viewport* (not a growing geographic bounds), so
+  //    tile count stays roughly constant per zoom level regardless of
+  //    how far zoomed in -- covers from where the overview leaves off up
+  //    through past the per-day map's own default zoom, i.e. the entire
+  //    range a user would naturally pass through zooming from "see the
+  //    whole trip" in to "see this street."
+  // Together ~2,400 tiles / ~25-45MB as of the current lodging list --
+  // deliberately still bounded to the actual trip region across its
+  // practical zoom range, not "all of Scandinavia at every zoom level."
+  const MAP_PREFETCH_VERSION = "v2"; // bump to force a re-run (e.g. if lodging locations change, or this coverage is widened further)
   const MAP_PREFETCH_KEY = "rougeux_map_tiles_prefetched";
-  const MAP_PREFETCH_OVERVIEW_ZOOMS = [MAP_MIN_ZOOM, MAP_MIN_ZOOM + 1];
+  const MAP_PREFETCH_OVERVIEW_ZOOMS = [4, 5, 6, 7, 8, 9];
+  const MAP_PREFETCH_CITY_VIEWPORT_ZOOMS = [9, 10, 11, 12, 13, 14, 15, 16, 17];
   // Bigger than the 640x320 per-day map canvas -- the trip-wide Leaflet
   // map's "fly into this city" view (see TRIP_MAP_DETAIL_MIN_ZOOM) can
   // fill a full-screen viewport, so this covers that too, not just the
@@ -3200,8 +3215,10 @@
     const points = uniqueLodgingPoints();
     if (!points.length) return [];
     const urls = new Set();
-    points.forEach(([lat, lon]) => {
-      tileUrlsForViewport(lat, lon, MAP_DEFAULT_ZOOM, MAP_PREFETCH_CITY_VIEWPORT, 1).forEach((u) => urls.add(u));
+    MAP_PREFETCH_CITY_VIEWPORT_ZOOMS.forEach((zoom) => {
+      points.forEach(([lat, lon]) => {
+        tileUrlsForViewport(lat, lon, zoom, MAP_PREFETCH_CITY_VIEWPORT, 1).forEach((u) => urls.add(u));
+      });
     });
     MAP_PREFETCH_OVERVIEW_ZOOMS.forEach((zoom) => {
       tileUrlsForBounds(points, zoom, 1).forEach((u) => urls.add(u));

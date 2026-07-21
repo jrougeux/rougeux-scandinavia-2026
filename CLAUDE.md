@@ -180,18 +180,32 @@ Defined as CSS custom properties in `styles.css` (`:root`):
   see `navigator.serviceWorker.ready` in the bootstrap at the bottom of
   `app.js`), `prefetchMapTiles()` proactively downloads map tiles for the
   region actually being visited, so offline map viewing works without
-  requiring the user to have manually browsed every area first: each
-  unique lodging city at the per-day map's default zoom (`MAP_DEFAULT_ZOOM`,
-  sized to a generous viewport so it also covers the trip map's "fly into
-  this city" view, not just the per-day map card), plus the whole trip's
-  bounding box at its minimum zoom for the overview. ~310 tiles / a few MB
-  total as of the current lodging list — deliberately bounded to actual
-  default views, not "every zoom level of all of Scandinavia." Runs once
-  (a `localStorage` flag under `MAP_PREFETCH_VERSION`, bump that constant
-  to force a re-run e.g. after lodging locations change), skips entirely
-  if `navigator.onLine === false`, and only marks itself done after every
-  queued tile settles (success or failure) so an interrupted first run
-  retries in full next time rather than silently staying incomplete.
+  requiring the user to have manually browsed every area first. Covers
+  two stitched-together zoom ranges (no gap a normal zoom gesture could
+  land in and hit blank tiles) -- see the comment above
+  `MAP_PREFETCH_OVERVIEW_ZOOMS`/`MAP_PREFETCH_CITY_VIEWPORT_ZOOMS` for the
+  full reasoning: `MAP_PREFETCH_OVERVIEW_ZOOMS` (4-9) fetches the whole
+  trip's bounding box at zooms cheap enough to cover every city in one
+  fetch, and `MAP_PREFETCH_CITY_VIEWPORT_ZOOMS` (9-17) fetches each
+  lodging city individually at a *fixed pixel viewport* per zoom level
+  (not a growing geographic bounds), so tile count stays roughly constant
+  per level regardless of zoom, all the way from where the overview
+  leaves off up through past the per-day map's own default zoom. ~2,400
+  tiles / ~25-45MB total as of the current lodging list — wider than an
+  earlier version that covered only a handful of isolated zoom levels (a
+  real bug: zooming to any *other* level while offline hit blank tiles
+  even in the correct region, worst on the trip-wide Leaflet map since
+  its "fly into this city" flow passes through many intermediate zooms a
+  user wouldn't hit on the simpler per-day canvas map) — but still
+  deliberately bounded to the actual trip region across its practical
+  zoom range, not "all of Scandinavia at every zoom level." Runs once (a
+  `localStorage` flag under `MAP_PREFETCH_VERSION`, bump that constant to
+  force a re-run e.g. after lodging locations change or this coverage is
+  widened further), skips entirely if `navigator.onLine === false`, and
+  only marks itself done after every queued tile settles (success,
+  failure, or a 20s per-tile fallback timeout in case one request hangs
+  rather than cleanly failing) so an interrupted first run retries in
+  full next time rather than silently staying incomplete.
 - Individual logistics legs (Logistics list) and dining candidates (Dining
   options) each get a "📍 View on map" or "🚶 Walking directions" link where a
   real location is known — see `mapLinkForLeg()`. These use Google Maps
