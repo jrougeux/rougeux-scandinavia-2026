@@ -1,4 +1,4 @@
-const CACHE_NAME = "rougeux-trip-v66";
+const CACHE_NAME = "rougeux-trip-v67";
 // Holds everything fetched at runtime and not part of the precached shell
 // below: map tiles (per-day canvas renderer and the trip-wide Leaflet
 // map, including the proactive prefetch in app.js) and ticket PDFs/JPGs.
@@ -64,8 +64,19 @@ self.addEventListener("activate", (event) => {
 });
 
 self.addEventListener("fetch", (event) => {
+  // A request explicitly marked "reload" -- app.js's bulk "Download"
+  // buttons/prefetch paths pass { cache: "reload" } specifically for
+  // this -- skips straight to the network instead of serving whatever's
+  // already in Cache Storage. Without this, those "download" actions,
+  // whose entire purpose is guaranteeing a correct/complete file, were
+  // getting silently short-circuited by an *existing* cache entry (e.g.
+  // one left over incomplete from before the event.waitUntil() fix
+  // above, back when a write could get cut short) -- a plain fetch()
+  // from the page has no other way to bypass this handler's own
+  // cache-first Cache Storage check.
+  const forceFresh = event.request.cache === "reload";
   event.respondWith(
-    caches.match(event.request).then((cached) => {
+    (forceFresh ? Promise.resolve(null) : caches.match(event.request)).then((cached) => {
       if (cached) return cached;
       return fetch(event.request).then((response) => {
         // Cross-origin requests without CORS (e.g. the OpenStreetMap tile

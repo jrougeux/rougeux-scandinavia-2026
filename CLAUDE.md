@@ -213,6 +213,26 @@ still dependency-free vanilla JS.
   successfully-cached tile when it's actually an error response —
   plausibly part of why some zoom levels came back incomplete even
   though the download reported itself complete.
+- `downloadUrls()` passes `{ cache: "reload" }` on every request it makes
+  (in addition to `{ mode: "no-cors" }` for cross-origin tile requests),
+  and `sw.js`'s fetch handler explicitly checks
+  `event.request.cache === "reload"` to skip its own `caches.match()`
+  cache-first check and go straight to the network when set. Without
+  this, a "Download" button tap was just being served back whatever was
+  *already* in Cache Storage — including a stale/incomplete entry left
+  over from before the `event.waitUntil()` fix above (back when a write
+  could get silently cut short) — and would never actually re-fetch
+  anything from the network at all. That's a plausible root cause for a
+  download reporting "complete" almost instantly while the cached file
+  stays broken/unusable, since the fetch handler had no other way to
+  bypass its own cache-first check; a plain page-side `fetch()` can't
+  reach past a service worker on its own. Because `fetchOpts` now always
+  contains `{ cache: "reload" }`, it's always a truthy object regardless
+  of cross-origin status, so the success check can no longer use
+  `fetchOpts`'s truthiness to tell same-origin ticket requests (where
+  `res.ok` is meaningful) apart from cross-origin opaque tile requests
+  (where it isn't) — `downloadUrls()` computes `crossOrigin` as its own
+  variable up front and uses *that* instead.
 
 ## Data shape
 

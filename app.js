@@ -3465,7 +3465,20 @@
     let nextIndex = 0;
     let remaining = urls.length;
     let failedCount = 0;
-    const fetchOpts = (opts && opts.crossOrigin) ? { mode: "no-cors" } : undefined;
+    // cache: "reload" tells sw.js's fetch handler (see the matching
+    // comment there) to skip its own cache-first Cache Storage check and
+    // go straight to the network -- without this, a plain fetch() here
+    // would just get served back whatever's *already* cached, even a
+    // stale/incomplete entry left over from before earlier bug fixes,
+    // and never actually re-fetch anything. That defeats the entire
+    // point of a "Download"/prefetch action, whose job is guaranteeing a
+    // correct, complete file is on hand -- not merely checking whether
+    // something already claims to be cached.
+    const crossOrigin = !!(opts && opts.crossOrigin);
+    const fetchOpts = Object.assign(
+      { cache: "reload" },
+      crossOrigin ? { mode: "no-cors" } : null
+    );
 
     function loadNext() {
       if (nextIndex >= urls.length) return;
@@ -3497,7 +3510,7 @@
       // arrived but before the file finished) is treated as a failure
       // regardless of what the headers said.
       fetch(url, fetchOpts).then((res) => {
-        const headersOk = fetchOpts ? true : !!(res && res.ok);
+        const headersOk = crossOrigin ? true : !!(res && res.ok);
         return res.blob().then(() => settle(headersOk), () => settle(false));
       }, () => settle(false));
     }
