@@ -774,7 +774,11 @@ input:focus-visible {
 .day-jump button:disabled { opacity: 0.3; }
 
 /* ---------- Trip map view ---------- */
-.trip-map-view { padding: 0 0 16px; }
+/* Bottom padding clears the legend, which is position:fixed (see
+   .trip-map-legend below) and would otherwise sit on top of the hint
+   text / bottom of the canvas instead of visually "making room" for
+   itself the way a normal-flow element would. */
+.trip-map-view { padding: 0 0 92px; }
 .trip-map-canvas {
   width: 100%;
   height: 68vh;
@@ -787,17 +791,45 @@ input:focus-visible {
   color: var(--text-faint);
   text-align: center;
 }
+/* Fixed to the bottom of the screen (just above the bottom nav) so it's
+   always visible without scrolling, rather than a normal-flow strip
+   below the map that could end up off-screen on a tall map. A 3-column
+   grid (not flex-wrap) guarantees exactly 2 rows for these 6 items
+   regardless of viewport width -- flex-wrap could spill to 3 lines on a
+   narrow phone with longer label text. */
 .trip-map-legend {
-  display: flex;
-  justify-content: center;
-  gap: 16px;
-  flex-wrap: wrap;
-  margin: 8px 16px 0;
-  font-size: 13px;
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: calc(56px + env(safe-area-inset-bottom, 0px));
+  z-index: 15;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 3px 10px;
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 6px 14px;
+  background: var(--surface);
+  border-top: 1px solid var(--line);
+  font-size: 11px;
   color: var(--text-dim);
 }
-.tml-item { display: inline-flex; align-items: center; gap: 5px; }
-.tml-dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; border: 1px solid rgba(255,255,255,0.6); }
+.tml-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.tml-dot {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+  border: 1px solid rgba(255,255,255,0.6);
+}
 
 .trip-map-pin {
   display: flex;
@@ -898,6 +930,53 @@ input:focus-visible {
 .leaflet-popup-tip { background: var(--surface); }
 .leaflet-container { font-family: var(--font-body); }
 .leaflet-control-attribution { font-size: 11px; }
+
+/* "Current Location" control -- stacks in the same top-left corner as
+   (directly below) Leaflet's own zoom control via leaflet-bar's default
+   margin/stacking; only the icon centering and active-state color are
+   custom here. */
+.trip-map-locate-control { margin-top: 8px !important; }
+.trip-map-locate-btn {
+  display: flex !important;
+  align-items: center;
+  justify-content: center;
+  width: 30px !important;
+  height: 30px !important;
+  line-height: normal !important;
+  color: var(--text-dim);
+  background: var(--surface);
+}
+.trip-map-locate-btn.active { color: #1a73e8; }
+.trip-map-locate-btn:active { background: var(--surface-2); }
+
+/* Live "blue dot" -- a Google-Maps-style position marker with a heading
+   cone. The accuracy circle itself is a Leaflet L.circle (real-world
+   meter radius, styled via its own JS options), not CSS. */
+.user-loc-icon { position: relative; }
+.user-loc-dot {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 14px;
+  height: 14px;
+  margin: -7px 0 0 -7px;
+  border-radius: 50%;
+  background: #1a73e8;
+  border: 2px solid #fff;
+  box-shadow: 0 0 0 1px rgba(0,0,0,0.25), 0 1px 4px rgba(0,0,0,0.35);
+}
+.user-loc-cone {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 0;
+  height: 0;
+  border-left: 9px solid transparent;
+  border-right: 9px solid transparent;
+  border-bottom: 22px solid rgba(26,115,232,0.35);
+  transform-origin: 50% 100%;
+  pointer-events: none;
+}
 
 /* ---------- Search view ---------- */
 .search-view { padding: 16px; max-width: 640px; margin: 0 auto; }

@@ -1665,7 +1665,219 @@
       tripMapInstance.remove();
       tripMapInstance = null;
     }
+    // These layers/control belong to the just-destroyed Leaflet instance
+    // (removed along with it) -- null them out so the next mount creates
+    // fresh ones rather than touching detached objects. The underlying
+    // tracking state (locationTrackingActive/userLocation/watch) is NOT
+    // reset here -- it deliberately outlives the map's own DOM lifecycle,
+    // see the "Live user location" section below.
+    userLocationLayer = null;
+    userLocationAccuracyLayer = null;
+    locationButtonEl = null;
   }
+
+  // ---------------- Live user location ("blue dot") ----------------
+  // Independent of whether the Map view is even mounted: toggling the
+  // "Current Location" control starts a navigator.geolocation watch that
+  // keeps running (and userLocation below stays current) while the user
+  // browses other tabs, so flipping back to Map shows an already-current
+  // dot rather than a stale or empty one -- this is the "persists while
+  // using the app" behavior. Only the Leaflet layers that actually draw
+  // the dot are tied to the map's mount/unmount cycle (guarded by
+  // tripMapInstance throughout), since render() fully tears down and
+  // rebuilds the Leaflet instance on every navigation (see teardownTripMap
+  // above) the way every other trip-map layer already does.
+  let locationTrackingActive = false; // user's toggle intent -- NOT the same as "a watch is running right now" (see visibilitychange below)
+  let locationWatchId = null;
+  let userLocation = null; // { lat, lon, accuracy, heading } -- heading in degrees (0 = north), null if unknown
+  let userLocationLayer = null; // L.marker: dot + heading cone
+  let userLocationAccuracyLayer = null; // L.circle: real-world accuracy radius
+  let locationButtonEl = null; // the custom Leaflet control's <a>, for toggling its "active" look
+  let pendingInitialCenter = false; // true from activation until the first fix arrives, so we center the map exactly once per activation, not on every update
+  let orientationListenerAttached = false;
+
+  const GEO_WATCH_OPTIONS = { enableHighAccuracy: true, maximumAge: 5000, timeout: 20000 };
+
+  // Standard "my location" crosshair glyph (ring + center dot + 4 tick
+  // marks) -- currentColor so CSS can recolor it for the active state.
+  const LOCATION_ICON_SVG = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+    <circle cx="12" cy="12" r="7"/>
+    <circle cx="12" cy="12" r="2.5" fill="currentColor" stroke="none"/>
+    <line x1="12" y1="1" x2="12" y2="4" stroke-linecap="round"/>
+    <line x1="12" y1="20" x2="12" y2="23" stroke-linecap="round"/>
+    <line x1="1" y1="12" x2="4" y2="12" stroke-linecap="round"/>
+    <line x1="20" y1="12" x2="23" y2="12" stroke-linecap="round"/>
+  </svg>`;
+
+  function updateLocationButtonUI() {
+    if (!locationButtonEl) return;
+    locationButtonEl.classList.toggle("active", locationTrackingActive);
+  }
+
+  function userLocationDivIcon(heading) {
+    const cone = heading == null ? "" : `<div class="user-loc-cone" style="transform: translate(-50%, -100%) rotate(${heading}deg);"></div>`;
+    return L.divIcon({
+      className: "user-loc-icon",
+      html: `${cone}<div class="user-loc-dot"></div>`,
+      iconSize: [24, 24],
+      iconAnchor: [12, 12]
+    });
+  }
+
+  function renderUserLocationOnMap() {
+    if (!tripMapInstance || !userLocation) return;
+    const { lat, lon, accuracy, heading } = userLocation;
+    const latlng = [lat, lon];
+    if (!userLocationAccuracyLayer) {
+      userLocationAccuracyLayer = L.circle(latlng, {
+        radius: accuracy || 0,
+        color: "#1a73e8",
+        weight: 1,
+        fillColor: "#1a73e8",
+        fillOpacity: 0.15,
+        interactive: false
+      }).addTo(tripMapInstance);
+    } else {
+      userLocationAccuracyLayer.setLatLng(latlng);
+      userLocationAccuracyLayer.setRadius(accuracy || 0);
+    }
+    if (!userLocationLayer) {
+      userLocationLayer = L.marker(latlng, {
+        icon: userLocationDivIcon(heading),
+        zIndexOffset: 1000,
+        interactive: false
+      }).addTo(tripMapInstance);
+    } else {
+      userLocationLayer.setLatLng(latlng);
+      userLocationLayer.setIcon(userLocationDivIcon(heading));
+    }
+  }
+
+  function clearUserLocationLayers() {
+    if (userLocationLayer && tripMapInstance) {
+      try { tripMapInstance.removeLayer(userLocationLayer); } catch (e) {}
+    }
+    if (userLocationAccuracyLayer && tripMapInstance) {
+      try { tripMapInstance.removeLayer(userLocationAccuracyLayer); } catch (e) {}
+    }
+    userLocationLayer = null;
+    userLocationAccuracyLayer = null;
+  }
+
+  // iOS Safari exposes true compass heading directly as
+  // event.webkitCompassHeading (no correction needed); everywhere else
+  // that supports it, event.alpha is counterclockwise from the device's
+  // initial orientation, so 360-alpha approximates compass heading when
+  // the event is "absolute". This app is documented as iPhone-only (see
+  // CLAUDE.md), so webkitCompassHeading is the primary path -- the
+  // fallback is best-effort, not a tested/supported path.
+  function handleOrientationEvent(event) {
+    let heading = null;
+    if (typeof event.webkitCompassHeading === "number") {
+      heading = event.webkitCompassHeading;
+    } else if (event.absolute && typeof event.alpha === "number") {
+      heading = (360 - event.alpha) % 360;
+    }
+    if (heading == null || !userLocation) return;
+    userLocation = { ...userLocation, heading };
+    renderUserLocationOnMap();
+  }
+
+  // iOS 13+ requires DeviceOrientationEvent.requestPermission(), which
+  // must be called from within a user-gesture handler -- the location
+  // button's own click (see toggleLocationTracking) qualifies. Heading is
+  // a nice-to-have on top of GPS-based tracking (coords.heading from
+  // watchPosition already covers "which way am I facing" while actually
+  // moving), so a denied/unsupported compass just means the dot has no
+  // direction cone while stationary -- not treated as an error.
+  function attachOrientationListener() {
+    if (orientationListenerAttached || typeof DeviceOrientationEvent === "undefined") return;
+    function addListener() {
+      window.addEventListener("deviceorientation", handleOrientationEvent);
+      orientationListenerAttached = true;
+    }
+    if (typeof DeviceOrientationEvent.requestPermission === "function") {
+      DeviceOrientationEvent.requestPermission().then((result) => {
+        if (result === "granted") addListener();
+      }).catch(() => {});
+    } else {
+      addListener();
+    }
+  }
+
+  function detachOrientationListener() {
+    if (!orientationListenerAttached) return;
+    window.removeEventListener("deviceorientation", handleOrientationEvent);
+    orientationListenerAttached = false;
+  }
+
+  function onLocationUpdate(pos) {
+    const heading = (typeof pos.coords.heading === "number" && !Number.isNaN(pos.coords.heading))
+      ? pos.coords.heading
+      : (userLocation ? userLocation.heading : null);
+    userLocation = { lat: pos.coords.latitude, lon: pos.coords.longitude, accuracy: pos.coords.accuracy, heading };
+    renderUserLocationOnMap();
+    if (pendingInitialCenter && tripMapInstance) {
+      pendingInitialCenter = false;
+      tripMapInstance.flyTo([userLocation.lat, userLocation.lon], Math.max(tripMapInstance.getZoom(), 15), { duration: 0.6 });
+    }
+  }
+
+  function onLocationError() {
+    pendingInitialCenter = false;
+    deactivateLocationTracking();
+    alert("Couldn't get your location. Check that Location Services are allowed for this site in your device settings.");
+  }
+
+  function activateLocationTracking() {
+    if (!("geolocation" in navigator)) {
+      alert("Location isn't available on this device/browser.");
+      return;
+    }
+    locationTrackingActive = true;
+    pendingInitialCenter = true;
+    locationWatchId = navigator.geolocation.watchPosition(onLocationUpdate, onLocationError, GEO_WATCH_OPTIONS);
+    attachOrientationListener();
+    updateLocationButtonUI();
+  }
+
+  function deactivateLocationTracking() {
+    locationTrackingActive = false;
+    pendingInitialCenter = false;
+    if (locationWatchId != null) {
+      navigator.geolocation.clearWatch(locationWatchId);
+      locationWatchId = null;
+    }
+    detachOrientationListener();
+    userLocation = null;
+    clearUserLocationLayers();
+    updateLocationButtonUI();
+  }
+
+  function toggleLocationTracking() {
+    if (locationTrackingActive) deactivateLocationTracking();
+    else activateLocationTracking();
+  }
+
+  // Battery-saving pause: stop the OS-level watch (and compass listener)
+  // whenever the app isn't the foreground/active tab, but leave
+  // locationTrackingActive (and the button's selected look) alone -- this
+  // is "not actively tracking right now," not "the user turned tracking
+  // off," so it resumes silently (no re-prompt, no re-center) as soon as
+  // the app is active again.
+  document.addEventListener("visibilitychange", () => {
+    if (!locationTrackingActive) return;
+    if (document.hidden) {
+      if (locationWatchId != null) {
+        navigator.geolocation.clearWatch(locationWatchId);
+        locationWatchId = null;
+      }
+      detachOrientationListener();
+    } else if (locationWatchId == null) {
+      locationWatchId = navigator.geolocation.watchPosition(onLocationUpdate, onLocationError, GEO_WATCH_OPTIONS);
+      attachOrientationListener();
+    }
+  });
 
   // Jump straight to a specific pin on the trip map (from a "Map view"
   // link in the day itinerary) -- centers on it, zooms in close enough
@@ -1970,12 +2182,12 @@
     const legend = document.createElement("div");
     legend.className = "trip-map-legend";
     legend.innerHTML = `
-      <span class="tml-item"><span class="tml-dot" style="background:${categoryMapColor("lodging")}"></span>City / lodging</span>
+      <span class="tml-item"><span class="tml-dot" style="background:${categoryMapColor("lodging")}"></span>Lodging</span>
       <span class="tml-item"><span class="tml-dot" style="background:${categoryMapColor("activity")}"></span>Activity</span>
-      <span class="tml-item"><span class="tml-dot" style="background:${categoryMapColor("dining")}"></span>Dining (confirmed)</span>
-      <span class="tml-item"><span class="tml-dot" style="background:${categoryMapColor("dining-suggested")}"></span>Dining (suggested)</span>
-      <span class="tml-item"><span class="tml-dot" style="background:${categoryMapColor("transport")}"></span>Station / stop</span>
-      <span class="tml-item"><span class="tml-dot" style="background:${categoryMapColor("poi")}"></span>Point of interest</span>
+      <span class="tml-item"><span class="tml-dot" style="background:${categoryMapColor("dining")}"></span>Dining</span>
+      <span class="tml-item"><span class="tml-dot" style="background:${categoryMapColor("dining-suggested")}"></span>Tentative</span>
+      <span class="tml-item"><span class="tml-dot" style="background:${categoryMapColor("transport")}"></span>Station</span>
+      <span class="tml-item"><span class="tml-dot" style="background:${categoryMapColor("poi")}"></span>POI</span>
     `;
     container.appendChild(legend);
 
@@ -1993,6 +2205,33 @@
         maxZoom: 18,
         attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors'
       }).addTo(map);
+
+      // "Current Location" control -- stacks in the same top-left corner
+      // as (and directly below) Leaflet's own zoom control. A custom
+      // L.Control rather than a plain HTML button positioned over the map
+      // so Leaflet handles its placement/stacking and swallows its clicks
+      // (L.DomEvent.disableClickPropagation) instead of them falling
+      // through to a map pan/click.
+      const LocationControl = L.Control.extend({
+        options: { position: "topleft" },
+        onAdd: function () {
+          const el = L.DomUtil.create("div", "leaflet-bar trip-map-locate-control");
+          const btn = L.DomUtil.create("a", "trip-map-locate-btn", el);
+          btn.href = "#";
+          btn.title = "Show my location";
+          btn.innerHTML = LOCATION_ICON_SVG;
+          L.DomEvent.disableClickPropagation(el);
+          L.DomEvent.on(btn, "click", (e) => {
+            L.DomEvent.preventDefault(e);
+            toggleLocationTracking();
+          });
+          locationButtonEl = btn;
+          return el;
+        }
+      });
+      new LocationControl().addTo(map);
+      updateLocationButtonUI();
+      if (locationTrackingActive && userLocation) renderUserLocationOnMap();
 
       const { cityPoints, detailPoints, hubPoints, poiPoints } = TRIP_MAP_POINTS;
 

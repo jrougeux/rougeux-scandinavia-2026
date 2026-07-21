@@ -203,6 +203,48 @@ Defined as CSS custom properties in `styles.css` (`:root`):
   reopened after the map is torn down and rebuilt, since `render()` fully
   wipes and recreates the DOM (and the Leaflet instance) on every
   navigation -- see `trackMarker()` / `teardownTripMap()`.
+- The trip map has a Google-Maps-style "Current Location" control
+  (`LocationControl` in `renderTripMapView()`, a custom `L.Control`
+  stacked in the same top-left corner as Leaflet's own zoom control) that
+  toggles a live "blue dot": tapping it once starts a
+  `navigator.geolocation.watchPosition()` watch, centers the map on the
+  first fix, and draws a dot + accuracy circle (`renderUserLocationOnMap()`)
+  that keeps moving live as new fixes arrive; tapping it again deselects
+  and stops tracking entirely (`toggleLocationTracking()` /
+  `activateLocationTracking()` / `deactivateLocationTracking()`). A
+  heading cone on the dot shows facing direction, sourced from
+  `coords.heading` (GPS-derived, only present while actually moving) or
+  falling back to the device compass via `deviceorientation`'s
+  `event.webkitCompassHeading` (iOS Safari-specific — this app is
+  iPhone-only, see below — requested via
+  `DeviceOrientationEvent.requestPermission()` inside the button's own
+  click handler, since iOS requires that call happen synchronously within
+  a user gesture). Needs no network at all (GPS keeps working in airplane
+  mode; nothing here is gated on `navigator.onLine`), so it works fully
+  offline. Tracking state (`locationTrackingActive`/`userLocation`/the
+  active `watchPosition` id) lives at module scope, independent of
+  whether the Map view is even mounted — the watch keeps running while
+  browsing other tabs so flipping back to Map shows an already-current
+  dot; only the Leaflet layers that draw it are tied to the map's
+  mount/unmount cycle (nulled out in `teardownTripMap()` alongside every
+  other per-mount layer, redrawn on the next mount if tracking is still
+  active). A `visibilitychange` listener pauses the underlying
+  `watchPosition`/compass listener whenever the tab isn't active (battery
+  saving) and silently resumes it when it's foregrounded again, without
+  touching `locationTrackingActive` itself or re-prompting for
+  permission — backgrounding is "not tracking right now," not "the user
+  turned it off." None of this is persisted to localStorage; like the
+  map's pan/zoom state below, it's in-memory only and starts fresh (off)
+  on a full reload, so the app never silently starts requesting location
+  on launch.
+- The map legend (`.trip-map-legend`) is `position: fixed` to the bottom
+  of the screen, just above the bottom nav, rather than a normal-flow
+  strip below the map — always visible without scrolling. It's a 3-column
+  CSS grid (not `flex-wrap`), which guarantees exactly 2 rows for its 6
+  items regardless of viewport width; flex-wrap could spill to a 3rd line
+  on a narrow phone. `.trip-map-view` carries extra bottom padding so
+  normal-flow content (the hint text) isn't hidden underneath the
+  now-fixed legend.
 - Walking legs can also introduce a pin, not just activity/dining/transport
   ones -- e.g. day 14 leg 151 ("Bryggen") is a plain walking destination
   with no activity/dining leg of its own, so without this it wouldn't
