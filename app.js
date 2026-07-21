@@ -3030,9 +3030,86 @@
   }
 
   // ---------------- Checklist view ----------------
+  // One row of the Checklist tab's "Offline data" section: a title, a
+  // status line, a progress bar, and a "Download" button. On mount it
+  // checks (via countCachedUrls()) how much of `urls` is *actually*
+  // already cached, rather than trusting a localStorage "done" flag that
+  // this whole feature exists because it can't be fully trusted (see
+  // downloadUrls()'s doc comment). Tapping the button always re-runs the
+  // full download regardless of that flag -- the point of a manual
+  // "force" trigger -- with live progress, and updates the flag on
+  // completion so the silent background prefetch doesn't redundantly
+  // re-run next load.
+  function renderOfflineDataRow(title, urls, concurrency, crossOrigin, prefetchKey, prefetchVersion) {
+    const row = document.createElement("div");
+    row.className = "offline-data-row";
+
+    const head = document.createElement("div");
+    head.className = "offline-data-head";
+    const titleEl = document.createElement("span");
+    titleEl.className = "offline-data-title";
+    titleEl.textContent = title;
+    const statusEl = document.createElement("span");
+    statusEl.className = "offline-data-status";
+    statusEl.textContent = "Checking…";
+    head.appendChild(titleEl);
+    head.appendChild(statusEl);
+    row.appendChild(head);
+
+    const track = document.createElement("div");
+    track.className = "offline-data-track";
+    const fill = document.createElement("div");
+    fill.className = "offline-data-fill";
+    track.appendChild(fill);
+    row.appendChild(track);
+
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "offline-data-btn";
+    btn.textContent = "Download";
+    row.appendChild(btn);
+
+    function setProgress(done, total, label) {
+      const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+      fill.style.width = pct + "%";
+      statusEl.textContent = label || `${done} / ${total} (${pct}%)`;
+    }
+
+    btn.addEventListener("click", () => {
+      btn.disabled = true;
+      setProgress(0, urls.length);
+      downloadUrls(urls, concurrency, { crossOrigin }, (done, total) => setProgress(done, total), (succeeded, total) => {
+        try { localStorage.setItem(prefetchKey, prefetchVersion); } catch (e) {}
+        btn.disabled = false;
+        setProgress(succeeded, total, succeeded === total
+          ? `✓ All ${total} downloaded`
+          : `${succeeded} / ${total} — tap Download to retry the rest`);
+      });
+    });
+
+    countCachedUrls(urls, (cached, total) => setProgress(cached, total));
+
+    return row;
+  }
+
   function renderChecklistView() {
     const container = document.createElement("div");
     container.className = "checklist-view";
+
+    const offlineLabel = document.createElement("div");
+    offlineLabel.className = "section-label";
+    offlineLabel.textContent = "Offline data";
+    container.appendChild(offlineLabel);
+
+    const offlineCard = document.createElement("div");
+    offlineCard.className = "offline-data-card";
+    offlineCard.appendChild(renderOfflineDataRow(
+      "Tickets & vouchers", TICKET_FILES.map(ticketFileUrl), 3, false, TICKET_PREFETCH_KEY, TICKET_PREFETCH_VERSION
+    ));
+    offlineCard.appendChild(renderOfflineDataRow(
+      "Map tiles (Sweden & Norway)", buildMapPrefetchUrls(), 6, true, MAP_PREFETCH_KEY, MAP_PREFETCH_VERSION
+    ));
+    container.appendChild(offlineCard);
 
     const label = document.createElement("div");
     label.className = "section-label";
@@ -3087,24 +3164,40 @@
   }
 
   // ---------------- Header / bottom nav ----------------
-  function renderHeader() {
-    const header = document.createElement("div");
-    header.className = "app-header";
-    header.innerHTML = `
-      <div class="app-banner">
-        <p class="app-title">${DATA.meta.family_name} Family Itinerary 🇸🇪<span class="app-title-flag-gap">🇳🇴</span></p>
-        <p class="app-subtitle">${fmtFullDate(DATA.meta.start_date)} - ${fmtFullDate(DATA.meta.end_date)}</p>
-      </div>
-    `;
-    if (state.view === "day") {
-      header.appendChild(renderDayNav());
-    }
-    return header;
-  }
+  // Persistent shell containers -- created once (ensureShell(), called
+  // from render()) and never removed from the DOM again; render()
+  // updates their *contents* in place instead of destroying and
+  // rebuilding the whole tree on every navigation. This matters
+  // specifically for the header: position:sticky needs the browser to
+  // continuously track an element's position relative to its scrolling
+  // ancestor, and recreating a brand-new sticky element on every
+  // navigation meant that tracking had to be reestablished from scratch
+  // each time -- visible as the header flashing into its normal (static,
+  // in-document-flow) position for a frame before snapping back to
+  // sticky, especially noticeable since it's the very first thing
+  // painted after a navigation clears the page. The bottom nav
+  // (position:fixed, not sticky) doesn't have that exact failure mode,
+  // but is kept stable too for the same reason and so its buttons' click
+  // listeners aren't needlessly torn down and re-attached on every
+  // render. The main view content (Day/Map/Wiki/etc.) has no such state
+  // to preserve, so it's still fully replaced each time -- see viewEl in
+  // render() below.
+  let headerEl = null;
+  let bottomNavEl = null;
+  let bottomNavButtons = null; // { day: <button>, map: <button>, ... }
+  let viewEl = null;
 
-  function renderBottomNav() {
-    const nav = document.createElement("div");
-    nav.className = "bottom-nav";
+  function ensureShell() {
+    if (headerEl) return;
+    headerEl = document.createElement("div");
+    root.appendChild(headerEl);
+
+    viewEl = document.createElement("div");
+    root.appendChild(viewEl);
+
+    bottomNavEl = document.createElement("div");
+    bottomNavEl.className = "bottom-nav";
+    bottomNavButtons = {};
     const items = [
       { key: "day", icon: "🗓️", label: "Day" },
       { key: "map", icon: "🗺️", label: "Map" },
@@ -3116,7 +3209,6 @@
     items.forEach((it) => {
       const btn = document.createElement("button");
       btn.type = "button";
-      btn.className = it.key === state.view ? "active" : "";
       btn.innerHTML = `<span class="bicon">${it.icon}</span><span>${it.label}</span>`;
       btn.addEventListener("click", () => {
         const wasDay = state.view === "day";
@@ -3140,9 +3232,29 @@
         // else: redundant click on the already-active Day tab -- leave
         // scroll exactly where it is rather than yanking to a stale value.
       });
-      nav.appendChild(btn);
+      bottomNavButtons[it.key] = btn;
+      bottomNavEl.appendChild(btn);
     });
-    return nav;
+    root.appendChild(bottomNavEl);
+  }
+
+  function updateHeader() {
+    headerEl.className = "app-header";
+    headerEl.innerHTML = `
+      <div class="app-banner">
+        <p class="app-title">${DATA.meta.family_name} Family Itinerary 🇸🇪<span class="app-title-flag-gap">🇳🇴</span></p>
+        <p class="app-subtitle">${fmtFullDate(DATA.meta.start_date)} - ${fmtFullDate(DATA.meta.end_date)}</p>
+      </div>
+    `;
+    if (state.view === "day") {
+      headerEl.appendChild(renderDayNav());
+    }
+  }
+
+  function updateBottomNav() {
+    Object.keys(bottomNavButtons).forEach((key) => {
+      bottomNavButtons[key].className = key === state.view ? "active" : "";
+    });
   }
 
   // Scroll position within the Day view, captured whenever navigating away
@@ -3168,7 +3280,7 @@
     saveTicketsDayIndex(state.ticketsDayIndex);
     saveWikiEntryId(state.wikiEntryId);
     teardownTripMap();
-    root.innerHTML = "";
+    ensureShell();
 
     // Viewing a ticket file is a full-screen takeover -- no header or
     // bottom-nav, and the page itself can't scroll (matches the day-jump
@@ -3177,15 +3289,24 @@
     // nested iframe/image, so anything else visibly on screen competes
     // for that gesture and the file ends up feeling clipped/unscrollable.
     // Making the file viewer the only thing on screen removes that
-    // ambiguity entirely.
+    // ambiguity entirely. headerEl/bottomNavEl are hidden (not removed)
+    // rather than torn down, consistent with keeping them persistent
+    // everywhere else.
     if (state.view === "tickets" && state.ticketFile) {
       document.body.style.overflow = "hidden";
-      root.appendChild(renderTicketFileView(state.ticketFile));
+      headerEl.style.display = "none";
+      bottomNavEl.style.display = "none";
+      viewEl.innerHTML = "";
+      viewEl.appendChild(renderTicketFileView(state.ticketFile));
       return;
     }
+    headerEl.style.display = "";
+    bottomNavEl.style.display = "";
     document.body.style.overflow = "";
 
-    root.appendChild(renderHeader());
+    updateHeader();
+
+    viewEl.innerHTML = "";
     let view;
     if (state.view === "day") view = renderDayView();
     else if (state.view === "map") view = renderTripMapView();
@@ -3193,8 +3314,9 @@
     else if (state.view === "tickets") view = renderTicketsView();
     else if (state.view === "search") view = renderSearchView();
     else view = renderChecklistView();
-    root.appendChild(view);
-    root.appendChild(renderBottomNav());
+    viewEl.appendChild(view);
+
+    updateBottomNav();
   }
 
   // ---------------- Map tile prefetch (offline-ready without browsing first) ----------------
@@ -3297,6 +3419,74 @@
     return Array.from(urls);
   }
 
+  // ---------------- Shared download core (map tiles + ticket files) ----------------
+  // Generic bounded-concurrency download loop with a per-request timeout
+  // fallback, shared by every "prefetch"/"download all" path in the app
+  // (silent background prefetch of both map tiles and ticket files, and
+  // the manual "Download" buttons on the Checklist tab's Offline data
+  // section). A request that never resolves (hangs rather than cleanly
+  // failing) would otherwise leave the batch stuck forever without this
+  // fallback -- settledOnce guards against double-counting if the real
+  // fetch() response still arrives later, after the fallback already
+  // fired. onProgress(done, total) fires after every request settles;
+  // onDone(succeeded, total) fires once every request has (whether that
+  // one succeeded, failed, or hit the timeout).
+  //
+  // opts.crossOrigin (map tiles only) requests the response in "no-cors"
+  // mode, required for a cross-origin request (tile.openstreetmap.org)
+  // that doesn't send CORS headers -- fetch() in its default "cors" mode
+  // would otherwise reject outright rather than resolving. The resulting
+  // "opaque" response deliberately can't be introspected by the page
+  // (status is forced to 0, ok to false) even on success, so success is
+  // just "the promise resolved at all" for these, unlike same-origin
+  // ticket requests where res.ok is a real, readable signal.
+  function downloadUrls(urls, concurrency, opts, onProgress, onDone) {
+    if (!urls.length) { onDone(0, 0); return; }
+    let nextIndex = 0;
+    let remaining = urls.length;
+    let failedCount = 0;
+    const fetchOpts = (opts && opts.crossOrigin) ? { mode: "no-cors" } : undefined;
+
+    function loadNext() {
+      if (nextIndex >= urls.length) return;
+      const url = urls[nextIndex++];
+      let settledOnce = false;
+      const timeoutId = setTimeout(() => settle(false), 30000);
+      function settle(ok) {
+        if (settledOnce) return;
+        settledOnce = true;
+        clearTimeout(timeoutId);
+        remaining--;
+        if (!ok) failedCount++;
+        if (onProgress) onProgress(urls.length - remaining, urls.length);
+        if (remaining <= 0) onDone(urls.length - failedCount, urls.length);
+        else loadNext();
+      }
+      fetch(url, fetchOpts).then(
+        (res) => settle(fetchOpts ? true : !!(res && res.ok)),
+        () => settle(false)
+      );
+    }
+    for (let c = 0; c < Math.min(concurrency, urls.length); c++) loadNext();
+  }
+
+  // Checks which of `urls` are *already* present in any Cache Storage
+  // bucket for this origin -- caches.match() with no cache name given
+  // searches all of them, same as the service worker's own fetch handler
+  // does, so this doesn't need to know/import RUNTIME_CACHE_NAME from
+  // sw.js. Used to show real, current download status on the Checklist
+  // tab's Offline data section on mount, rather than only ever trusting
+  // the "done" localStorage flags (which this whole feature exists
+  // because those flags can't be fully trusted -- see downloadUrls()'s
+  // doc comment and the "assets/tickets/"/prefetchMapTiles() notes).
+  function countCachedUrls(urls, callback) {
+    if (!urls.length) { callback(0, 0); return; }
+    if (!("caches" in window)) { callback(0, urls.length); return; }
+    Promise.all(urls.map((u) => caches.match(u).then((res) => !!res).catch(() => false)))
+      .then((results) => callback(results.filter(Boolean).length, urls.length))
+      .catch(() => callback(0, urls.length));
+  }
+
   // Best-effort, low-priority background fetch: a bounded number of tile
   // requests run concurrently (politer to the tile server and the
   // device's network than firing hundreds at once), and the prefetch is
@@ -3309,41 +3499,9 @@
     try {
       if (localStorage.getItem(MAP_PREFETCH_KEY) === MAP_PREFETCH_VERSION) return;
     } catch (e) {}
-
-    const urls = buildMapPrefetchUrls();
-    if (!urls.length) return;
-
-    let nextIndex = 0;
-    let remaining = urls.length;
-    const CONCURRENCY = 6;
-
-    function loadNext() {
-      if (nextIndex >= urls.length) return;
-      const img = new Image();
-      // Image() has no built-in load timeout -- onload/onerror simply
-      // never fire for a request that hangs (rather than cleanly
-      // failing), which without this fallback would leave `remaining`
-      // stuck above 0 forever: the "done" flag never gets set, and every
-      // future page load re-attempts the *entire* prefetch from scratch.
-      // settledOnce guards against double-counting if the real
-      // onload/onerror still fires later, after the fallback already ran.
-      let settledOnce = false;
-      function settle() {
-        if (settledOnce) return;
-        settledOnce = true;
-        remaining--;
-        if (remaining <= 0) {
-          try { localStorage.setItem(MAP_PREFETCH_KEY, MAP_PREFETCH_VERSION); } catch (e) {}
-        } else {
-          loadNext();
-        }
-      }
-      setTimeout(settle, 20000);
-      img.onload = settle;
-      img.onerror = settle;
-      img.src = urls[nextIndex++];
-    }
-    for (let c = 0; c < Math.min(CONCURRENCY, urls.length); c++) loadNext();
+    downloadUrls(buildMapPrefetchUrls(), 6, { crossOrigin: true }, null, () => {
+      try { localStorage.setItem(MAP_PREFETCH_KEY, MAP_PREFETCH_VERSION); } catch (e) {}
+    });
   }
 
   // ---------------- Ticket file prefetch (offline-ready without opening first) ----------------
@@ -3362,47 +3520,28 @@
     try {
       if (localStorage.getItem(TICKET_PREFETCH_KEY) === TICKET_PREFETCH_VERSION) return;
     } catch (e) {}
-
-    const urls = TICKET_FILES.map(ticketFileUrl);
-    if (!urls.length) return;
-
-    let nextIndex = 0;
-    let remaining = urls.length;
-    // Lower than prefetchMapTiles()'s 6 -- these are individual PDFs/JPGs
-    // up to ~2MB each (map tiles are a few KB), so fewer of them in
-    // flight at once is politer to the connection.
-    const CONCURRENCY = 3;
-
-    function loadNext() {
-      if (nextIndex >= urls.length) return;
-      const url = urls[nextIndex++];
-      // Same rationale as prefetchMapTiles()'s settledOnce/setTimeout:
-      // fetch() has no built-in timeout, and without one a single hung
-      // request would leave `remaining` stuck above 0 forever, silently
-      // re-attempting the entire prefetch on every future load.
-      let settledOnce = false;
-      const timeoutId = setTimeout(settle, 30000);
-      function settle() {
-        if (settledOnce) return;
-        settledOnce = true;
-        clearTimeout(timeoutId);
-        remaining--;
-        if (remaining <= 0) {
-          try { localStorage.setItem(TICKET_PREFETCH_KEY, TICKET_PREFETCH_VERSION); } catch (e) {}
-        } else {
-          loadNext();
-        }
-      }
-      // The fetch() call itself is what the service worker's fetch
-      // handler intercepts and caches (same mechanism as opening a
-      // ticket normally) -- this code doesn't need to read the response
-      // body at all, just wait for the request to settle.
-      fetch(url).then(settle, settle);
-    }
-    for (let c = 0; c < Math.min(CONCURRENCY, urls.length); c++) loadNext();
+    // Lower concurrency than prefetchMapTiles()'s 6 -- these are
+    // individual PDFs/JPGs up to ~2MB each (map tiles are a few KB), so
+    // fewer of them in flight at once is politer to the connection.
+    downloadUrls(TICKET_FILES.map(ticketFileUrl), 3, null, null, () => {
+      try { localStorage.setItem(TICKET_PREFETCH_KEY, TICKET_PREFETCH_VERSION); } catch (e) {}
+    });
   }
 
   render();
+
+  // Best-effort request that the browser treat this origin's storage
+  // (Cache Storage, localStorage) as "persistent" rather than eligible
+  // for silent eviction under storage pressure -- iOS Safari in
+  // particular can otherwise clear a regular website's cached data
+  // without warning, which would look exactly like "the ticket/map-tile
+  // prefetch silently isn't working" even when the fetch/caching logic
+  // itself is correct. The browser can still ignore this (especially for
+  // a page that isn't installed to the home screen), so it's not a fix
+  // on its own -- just improves the odds.
+  if (navigator.storage && navigator.storage.persist) {
+    navigator.storage.persist().catch(() => {});
+  }
 
   if ("serviceWorker" in navigator) {
     window.addEventListener("load", () => {

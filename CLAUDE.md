@@ -115,17 +115,48 @@ still dependency-free vanilla JS.
   `parseTicketFilename()`. Ticket PDFs are *not* in `sw.js`'s precached
   `ASSETS` list (that would bloat the initial install by several MB and
   block the service worker's install step on every one of them
-  succeeding). Instead, `prefetchTicketFiles()` in `app.js` (same
-  shape/lifecycle as `prefetchMapTiles()` — see below — run from the same
-  `navigator.serviceWorker.ready` bootstrap) fetches every file in
-  `TICKET_FILES` in the background on first load, so tickets are
+  succeeding). Instead, `prefetchTicketFiles()` in `app.js` fetches every
+  file in `TICKET_FILES` in the background on first load, so tickets are
   available offline without the user needing to have opened each one
   first. ~9MB total across all current tickets, small enough to fetch in
   full rather than needing `prefetchMapTiles()`'s zoom-range-style
-  scoping. `fetch()` here is what the service worker's fetch handler
-  actually intercepts and caches — same mechanism as opening a ticket
-  normally opportunistically caches it, just triggered proactively
-  instead of waiting for the user to open the file.
+  scoping.
+- `downloadUrls(urls, concurrency, opts, onProgress, onDone)` is the one
+  shared bounded-concurrency download loop (with a per-request timeout
+  fallback) behind *every* prefetch/download path in the app: the silent
+  background `prefetchMapTiles()`/`prefetchTicketFiles()`, and the two
+  "Download" buttons in the Checklist tab's "Offline data" section (see
+  below). `fetch()` is what the service worker's fetch handler actually
+  intercepts and caches — same mechanism as opening a ticket or panning
+  the map normally opportunistically caches things, just triggered
+  proactively instead of waiting for the user to do that. `opts.crossOrigin`
+  (map tiles only) requests the response in `"no-cors"` mode, required
+  for a cross-origin request to `tile.openstreetmap.org` that sends no
+  CORS headers — `fetch()` in its default `"cors"` mode would otherwise
+  reject outright. The resulting "opaque" response can't be introspected
+  by the page even on success (`status`/`ok` are meaningless), so for
+  those, resolving *at all* (vs. rejecting) is the only success signal
+  available; same-origin ticket requests get a real, readable `res.ok`.
+- The Checklist tab has an "Offline data" section (`renderOfflineDataRow()`)
+  with one row each for tickets and map tiles: a progress bar, a status
+  line, and a "Download" button. This exists because the silent
+  background prefetch is unobservable and unretriable from the UI — if it
+  silently stalls (a flaky connection, or iOS evicting Cache Storage
+  under storage pressure, which a plain website has less protection
+  against than an installed app) there's no way to tell or retry. Each
+  row's progress bar reflects **actual** current cache contents on
+  mount (`countCachedUrls()`, via `caches.match()` — with no cache name
+  given, that searches every cache bucket for the origin, same as the
+  service worker's own fetch handler, so it doesn't need to know/import
+  `RUNTIME_CACHE_NAME` from `sw.js`), not just a `localStorage` "done"
+  flag that this whole feature exists because it can't be fully trusted.
+  Tapping "Download" always re-runs the full download regardless of that
+  flag (the point of a manual "force" trigger), shows live progress, and
+  updates the flag on completion so the silent prefetch doesn't
+  redundantly re-run next load. `navigator.storage.persist()` is also
+  requested once on load (best-effort, silently ignored if unsupported or
+  denied) to reduce the odds of exactly that kind of silent eviction in
+  the first place.
 
 ## Data shape
 
@@ -192,25 +223,54 @@ Defined as CSS custom properties in `styles.css` (`:root`):
   `--accent`) for the same reason `background_color` has to match `--bg`
   — a mismatch between the banner and the OS-level chrome tint (status
   bar / task switcher) reads as a visible inconsistency, not a subtlety.
+  `.app-header` also carries `transform: translateZ(0)` (same technique
+  as `.bottom-nav`/`.trip-map-legend` elsewhere) to force it onto its own
+  compositing layer — without it, a `position: sticky` element can
+  visibly flicker or briefly disappear during rubber-band overscroll past
+  the bottom of the page, since the browser is compositing content
+  outside the normal document bounds during that bounce and sticky's
+  continuous position recalculation doesn't handle that gracefully
+  otherwise.
 - `.day-nav-outer` (the day-nav arrows + progress bar, both wrapped in
   it) has `padding: 0 16px` so the `‹`/`›` arrows aren't flush against
   the screen edges — matches the ~16px side padding every other view's
   container already uses (`.search-view`, `.wiki-view`, etc.).
+- `render()` does **not** tear down and rebuild the whole page on every
+  navigation anymore (an earlier version did `root.innerHTML = ""` then
+  rebuilt everything from scratch). `ensureShell()` creates three
+  persistent containers the *first* time `render()` ever runs —
+  `headerEl`, `viewEl`, `bottomNavEl` — and appends them to `#app` once;
+  every subsequent `render()` reuses those exact same DOM nodes,
+  updating their *contents* in place (`updateHeader()`/`updateBottomNav()`
+  for the two shell pieces, `viewEl.innerHTML = ""` + a fresh append for
+  the actual Day/Map/Wiki/etc. content, which has no persistent state
+  worth preserving so full replacement there is fine and simpler). This
+  matters specifically for the header: `position: sticky` needs the
+  browser to continuously track an element's position relative to its
+  scrolling ancestor, and destroying + recreating a brand-new sticky
+  element on every navigation meant that tracking had to be
+  reestablished from scratch each time — visible as the header flashing
+  into its normal (static, in-document-flow) position for a frame before
+  snapping back to sticky, reproducing in both Safari and Chrome since
+  it's standard sticky-positioning behavior, not a WebKit quirk. The
+  ticket-file full-screen takeover (see below) hides `headerEl`/
+  `bottomNavEl` via `style.display = "none"` rather than removing them,
+  for the same reason.
 - Nearly every navigation action in `app.js` (any place that changes
   `state.view`/`state.dayIndex`/etc., calls `render()`, and then wants
   the page at the top) calls `window.scrollTo(0, 0)` **before** `render()`
   now, not after — e.g. `goToDay()` (when it has no specific leg/dining
   target), `goToMapPin()`, the bottom nav, the day-jump prev/next
-  buttons, Wiki/Tickets navigation. `render()` does `root.innerHTML = ""`
-  then rebuilds synchronously, and the new content is very often a
-  different height than the old (e.g. a shorter day, or switching from
-  Day to a shorter view) — scrolling *after* that swap meant there was a
-  moment where the new (often shorter) content existed at the *old*
-  scroll offset, an out-of-bounds position the browser has to clamp,
-  which was visible as a brief flash on real devices before the app's
-  own `scrollTo(0, 0)` corrected it a moment later. Scrolling first,
-  while the old (still full-height) content is still on screen, avoids
-  that mismatch entirely. The one case that still scrolls *after*
+  buttons, Wiki/Tickets navigation. `viewEl`'s content still gets fully
+  replaced on every render (see above), and the new content is very
+  often a different height than the old (e.g. a shorter day, or
+  switching from Day to a shorter view) — scrolling *after* that swap
+  meant there was a moment where the new (often shorter) content existed
+  at the *old* scroll offset, an out-of-bounds position the browser has
+  to clamp, which was visible as a brief flash on real devices before the
+  app's own `scrollTo(0, 0)` corrected it a moment later. Scrolling
+  first, while the old (still full-height) content is still on screen,
+  avoids that mismatch entirely. The one case that still scrolls *after*
   render() is restoring `dayViewScrollY` when returning to Day view from
   elsewhere (bottom nav) — that needs Day view's real, often-taller
   content to exist first to land at the right offset; same story for
