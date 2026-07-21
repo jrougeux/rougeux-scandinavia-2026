@@ -446,15 +446,62 @@ still dependency-free vanilla JS.
   so this is a within-session hygiene concern, not a correctness one).
   `renderOfflineDataRow()` was generalized to take `downloadFn`/`checkFn`
   parameters instead of hardcoding Cache Storage calls, so it doesn't
-  need to know which backend a given resource actually uses — map tiles
-  still pass `downloadUrls()`/`countCachedUrls()` (Cache Storage has been
-  reasonably solid for tiles specifically; this migration is scoped to
-  tickets, the thing that actually kept failing). The Checklist tab's
-  "Clear cached data & start fresh" button now also calls
+  need to know which backend a given resource actually uses (at the time,
+  map tiles still passed `downloadUrls()`/`countCachedUrls()` against
+  Cache Storage — see the next bullet for why that changed too). The
+  Checklist tab's "Clear cached data & start fresh" button now also calls
   `idbKeyval.clear()` alongside its existing `caches.delete(...)`.
   `TICKET_PREFETCH_VERSION` was bumped again (`"v6"`) so this new
   mechanism gets a real first run rather than being suppressed by a
   "done" flag set under any earlier one.
+- Map tiles had the same "some zoom levels missing" symptom tickets had,
+  and moved to IndexedDB right after tickets did, for the same reason —
+  both bulk downloads now go through one shared `downloadToIdb(urls,
+  concurrency, opts, onProgress, onDone)` (`downloadTicketsToIdb()` was
+  renamed/generalized into this), with `opts.crossOrigin` selecting
+  `{ mode: "no-cors" }` for tile requests same as the old `downloadUrls()`
+  did. A cross-origin opaque response's body can still be read via
+  `.blob()` and stored even though its status/headers can't be
+  introspected — that's the whole point of caching an opaque response at
+  all — so the verification here checks a non-zero blob size (the only
+  signal available) instead of the byte-size-vs-`Content-Length`
+  comparison same-origin ticket requests get (`Content-Length` isn't
+  readable on an opaque response either). This directly catches a
+  rate-limited/blocked tile response that still *resolves* (rather than
+  rejecting) with an empty body — plausibly why some zoom levels came
+  back incomplete under the old Cache-Storage approach, which had no way
+  to detect that and cached the empty response "on faith." `countCachedIdb()`
+  (renamed/generalized from `countCachedTicketsIdb()`) is identical for
+  both resource types. `MAP_PREFETCH_VERSION` was bumped to `"v3"` for
+  the same "don't let an old done flag suppress a real retry" reason.
+  `RUNTIME_CACHE_NAME` is kept in `app.js` even though nothing writes
+  through `downloadToIdb()` into it anymore — the service worker's own
+  opportunistic caching of tiles fetched by ordinary map-panning (outside
+  any bulk download) still uses it, and the Checklist tab's "Clear cached
+  data" button still needs to know its name to wipe it.
+  Serving downloaded tiles offline needed two separate changes, since
+  tiles are drawn two different ways in this app: `drawStaticMap()` (the
+  per-day canvas map) now batch-checks IndexedDB for every tile its
+  current viewport needs in one `idbKeyval.getMany()` call (cheaper than
+  one `idbKeyval.get()` per tile) before building each tile's `Image()`,
+  using a `URL.createObjectURL()` blob: URL for tiles that were found and
+  falling back to the plain network URL otherwise — revoking each object
+  URL right after `Promise.all(loads)` resolves, since by then every
+  `<img>` has already loaded (or failed) and doesn't need the blob: URL
+  to stay alive for `drawImage()`. The trip-wide Leaflet map doesn't give
+  this app that same direct control over tile loading — Leaflet's own
+  `L.TileLayer` sets each tile `<img>`'s `src` internally — so
+  `OfflineTileLayer` (`L.TileLayer.extend({...})`, used in place of the
+  plain `L.tileLayer(...)` call) overrides `createTile(coords, done)`,
+  Leaflet's documented extension point for exactly this, checking
+  IndexedDB before setting `tile.src` and otherwise mirroring
+  `leaflet.js`'s own default `createTile` (down to reusing its private
+  `_tileOnLoad()`/`_tileOnError()` via `L.Util.bind()`, so fade-in/error
+  handling behaves exactly as it would for a normal tile) — deciding the
+  source asynchronously instead of synchronously is the only real
+  difference. Its object URL is revoked once the tile's `load`/`error`
+  event fires, since Leaflet never reassigns a new `src` onto the same
+  `<img>` element afterward.
 
 ## Data shape
 
