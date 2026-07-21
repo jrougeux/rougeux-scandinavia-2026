@@ -186,22 +186,27 @@ still dependency-free vanilla JS.
   `downloadUrls()`'s internal guard) so it can show a specific "you're
   offline" message immediately, instead of a generic post-hoc failure
   count.
-- `downloadUrls()`'s `settle()` only fires after calling `res.blob()` on
-  the fetch response and letting *that* resolve, not right after the
-  `fetch()` promise itself resolves. This matters because `fetch()`
-  resolves as soon as response **headers** arrive, not once the full
-  body has actually finished transferring -- checking `res.ok` and
-  calling a request "done" at that point meant a multi-megabyte ticket
-  PDF could be reported complete in a fraction of a second, long before
-  it had actually finished downloading (the real giveaway that surfaced
-  this: a progress bar finishing near-instantly for files that should
-  take several seconds). The `.blob()` result itself is discarded here —
-  the service worker's own `cache.put()`, operating on its own separate
-  `.clone()` of the response, is what actually persists the file — this
-  call exists purely to force waiting for the real, complete transfer
-  before reporting success. A body that fails partway through (the
-  connection drops after headers arrived but before the file finished)
-  is correctly treated as a failure regardless of what the headers said.
+- `downloadUrls()`'s `settle()` only fires after the full response body
+  has actually been consumed, not right after the `fetch()` promise
+  itself resolves. This matters because `fetch()` resolves as soon as
+  response **headers** arrive, not once the full body has actually
+  finished transferring -- checking `res.ok` and calling a request "done"
+  at that point meant a multi-megabyte ticket PDF could be reported
+  complete in a fraction of a second, long before it had actually
+  finished downloading (the real giveaway that surfaced this: a progress
+  bar finishing near-instantly for files that should take several
+  seconds). This originally called `res.blob()` purely to force waiting
+  for the real, complete transfer, discarding the result. It now instead
+  waits on `cache.put(url, res)` itself (see the direct-page-write note
+  below) -- `cache.put()` needs an unconsumed body to store, and its own
+  resolution doesn't happen until the full body has been read either, so
+  it serves as the same completion signal for free, with the added
+  benefit of also confirming the actual disk write succeeded (`res.blob()`
+  alone said nothing about whether a *separate* service-worker-side
+  `cache.put()` had also completed). A body that fails partway through
+  (the connection drops after headers arrived but before the file
+  finished) is correctly treated as a failure regardless of what the
+  headers said.
 - Map tile concurrency (`prefetchMapTiles()` and the Checklist tab's
   "Download" button) is 3, not a more aggressive number, because
   `tile.openstreetmap.org`'s usage policy actively rate-limits/blocks
@@ -267,32 +272,49 @@ still dependency-free vanilla JS.
   ever reaches this handler.
 - Even with the 206 fix above, a plain `fetch()`-based download (the
   Checklist "Download" button, and the silent `prefetchTicketFiles()`)
-  has not reliably produced a usable offline copy of a ticket **PDF** on
+  did not reliably produce a usable offline copy of a ticket **PDF** on
   iOS Safari in practice — while manually opening a PDF once while online
-  (going through the real `<embed type="application/pdf">` viewer) does
-  reliably make it work offline afterward, every time. Rather than
-  continue guessing at the exact iOS-specific mechanism behind that gap,
-  `downloadTicketFiles()` (used by both of those call sites instead of
-  `downloadUrls()` directly) sidesteps it by driving the *same real path*
-  the manual workaround uses, programmatically: `warmPdfFiles()` walks
-  every ticket PDF one at a time (not concurrently — several simultaneous
-  native PDF plugin instances is heavier and less predictable on mobile
-  than `fetch()` concurrency) via `warmPdfViaEmbed()`, which creates a
-  real `<embed type="application/pdf">`, positions it fully outside the
-  viewport (`position: fixed; left: -9999px` — not `display: none`, which
-  some browsers never actually load a resource for), appends it to the
-  document, sets its `src`, and waits for `load`/`error`/a 20s fallback
-  timeout before removing it and moving to the next. Ticket JPGs are
-  unaffected by any of this — they keep going through the existing
-  `downloadUrls()` `fetch()` path, which already reliably caches them.
-  Success is judged afterward by real Cache Storage contents
-  (`countCachedUrls()`), not the `<embed>`'s own `load` event firing —
-  same "trust actual cache state, not a completion signal" principle as
-  the rest of this feature, since a `load` event is not itself proof the
-  full file ended up cached. `TICKET_PREFETCH_VERSION` was bumped to
-  `"v2"` so everyone's existing "done" flag (set by the old,
-  PDF-unreliable `fetch()`-only prefetch) doesn't suppress a real retry
-  under this new mechanism.
+  (going through the real `<embed type="application/pdf">` viewer)
+  reliably made it work offline afterward. An earlier attempt at fixing
+  this (`downloadTicketFiles()`/`warmPdfFiles()`/`warmPdfViaEmbed()`,
+  since removed) tried to mimic that manual workaround by driving a
+  hidden, off-screen `<embed>` for each PDF instead of a plain `fetch()`
+  — this helped but still wasn't fully reliable, and risked iOS memory
+  pressure from creating many native PDF plugin instances back-to-back.
+  The actual root cause was more fundamental: the service worker's own
+  `cache.put()` (wrapped in `event.waitUntil()`, per the fix earlier in
+  this list) is spec-correct, but iOS Safari's service worker
+  implementation has not proven reliable at actually honoring that
+  extended lifetime under the back-to-back request volume a bulk
+  download produces — so a "download complete" signal based on the
+  fetch succeeding, alone, was never fully trustworthy for *any* file
+  type, PDFs just hit it hardest since they're the largest files here.
+  `downloadUrls()` now writes the fetched response into Cache Storage
+  **directly from the page** after a successful fetch —
+  `caches.open(RUNTIME_CACHE_NAME).then((cache) => cache.put(url, res))`
+  — instead of depending solely on the service worker's own fetch handler
+  to do it. `RUNTIME_CACHE_NAME` is duplicated as a plain constant in
+  `app.js` (no shared module between the two files, so it must be kept in
+  sync with `sw.js`'s constant of the same name by hand). A page-side
+  promise chain can be waited on directly, so `cache.put()`'s own
+  resolution is a definite, checkable guarantee the write completed,
+  rather than an assumption about a separate execution context's
+  extended-lifetime behavior — this also means the earlier `res.blob()`
+  call (added purely to force full-body consumption before declaring
+  success) is no longer needed: `cache.put()` needs an *unconsumed*
+  response body to store it, and its own resolution doesn't happen until
+  the full body has been read either, so it serves as that same
+  completion signal for free. This still lands in the exact same
+  `RUNTIME_CACHE_NAME` bucket the service worker's own opportunistic
+  caching uses, so a duplicate write there from the service worker's
+  own fetch handler for this same request is harmless (same content,
+  same key) — this is additive/defense-in-depth, not a replacement for
+  the service worker's own opportunistic caching of anything *not* run
+  through `downloadUrls()` (e.g. a ticket opened normally without ever
+  tapping "Download" first). Ticket PDFs now go through the exact same
+  `downloadUrls()` path as JPGs and map tiles — no more PDF/JPG split.
+  `TICKET_PREFETCH_VERSION` was bumped to `"v3"` so everyone's existing
+  "done" flag doesn't suppress a real retry under this mechanism.
 - The silent background prefetch (`prefetchTicketFiles()`/
   `prefetchMapTiles()`, on every app load) and the Checklist "Download"
   button can each independently decide to download the exact same set of

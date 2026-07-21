@@ -3040,7 +3040,7 @@
   // "force" trigger -- with live progress, and updates the flag on
   // completion so the silent background prefetch doesn't redundantly
   // re-run next load.
-  function renderOfflineDataRow(title, urls, concurrency, crossOrigin, prefetchKey, prefetchVersion, isTickets) {
+  function renderOfflineDataRow(title, urls, concurrency, crossOrigin, prefetchKey, prefetchVersion) {
     const row = document.createElement("div");
     row.className = "offline-data-row";
 
@@ -3098,19 +3098,15 @@
       }
       btn.disabled = true;
       setProgress(0, urls.length);
-      // startDedupedDownload (not downloadTicketFiles()/downloadUrls()
-      // directly) so a tap here merges into an already-running download
+      // startDedupedDownload (not downloadUrls() directly) so a tap here
+      // merges into an already-running download
       // for this same resource (the silent background prefetch, or a
       // still-in-flight run from before this row was last rebuilt) rather
       // than starting a second, independent run racing the first -- see
       // its doc comment for why that used to look like the download
       // restarting partway through.
       startDedupedDownload(prefetchKey, urls.length, (progress, done) => {
-        // Tickets route PDFs through downloadTicketFiles()'s <embed>-based
-        // warmup (see its doc comment) instead of a plain fetch() -- map
-        // tiles have no PDFs and keep using downloadUrls() directly.
-        if (isTickets) downloadTicketFiles(urls, concurrency, progress, done);
-        else downloadUrls(urls, concurrency, { crossOrigin }, progress, done);
+        downloadUrls(urls, concurrency, { crossOrigin }, progress, done);
       }, onProgress, onDone);
     });
 
@@ -3137,10 +3133,10 @@
     const offlineCard = document.createElement("div");
     offlineCard.className = "offline-data-card";
     offlineCard.appendChild(renderOfflineDataRow(
-      "Tickets & vouchers", TICKET_FILES.map(ticketFileUrl), 3, false, TICKET_PREFETCH_KEY, TICKET_PREFETCH_VERSION, true
+      "Tickets & vouchers", TICKET_FILES.map(ticketFileUrl), 3, false, TICKET_PREFETCH_KEY, TICKET_PREFETCH_VERSION
     ));
     offlineCard.appendChild(renderOfflineDataRow(
-      "Map tiles (Sweden & Norway)", buildMapPrefetchUrls(), 3, true, MAP_PREFETCH_KEY, MAP_PREFETCH_VERSION, false
+      "Map tiles (Sweden & Norway)", buildMapPrefetchUrls(), 3, true, MAP_PREFETCH_KEY, MAP_PREFETCH_VERSION
     ));
     container.appendChild(offlineCard);
 
@@ -3452,6 +3448,14 @@
     return Array.from(urls);
   }
 
+  // Must stay in sync with sw.js's own RUNTIME_CACHE_NAME constant --
+  // there's no shared module between the two files, so this is a plain
+  // duplicated literal, not an import. Used by downloadUrls() below to
+  // write a fetched response into Cache Storage directly from the page,
+  // rather than relying solely on the service worker's own fetch handler
+  // to do it (see downloadUrls()'s doc comment for why).
+  const RUNTIME_CACHE_NAME = "rougeux-trip-runtime";
+
   // ---------------- Shared download core (map tiles + ticket files) ----------------
   // Generic bounded-concurrency download loop with a per-request timeout
   // fallback, shared by every "prefetch"/"download all" path in the app
@@ -3521,22 +3525,41 @@
         else loadNext();
       }
       // fetch()'s promise resolves as soon as response *headers* arrive --
-      // not once the full body has actually finished transferring. For a
-      // multi-megabyte ticket PDF, checking res.ok and calling this
-      // settled immediately meant the progress bar (and this whole
-      // "done" signal) could complete almost instantly, long before the
-      // file had actually been fully downloaded -- the giveaway being a
-      // multi-second/multi-megabyte file "finishing" in a fraction of a
-      // second. Explicitly consuming the body via res.blob() (discarding
-      // the result -- the service worker's own cache.put(), operating on
-      // its own separate clone of the response, is what actually persists
-      // it) forces this to wait for the real, complete transfer. A body
-      // that fails partway through (connection drops after headers
-      // arrived but before the file finished) is treated as a failure
-      // regardless of what the headers said.
+      // not once the full body has actually finished transferring, and
+      // (for ticket PDFs specifically) the service worker's own fetch
+      // handler doing the actual cache.put() inside event.waitUntil() has
+      // not proven reliable in practice on iOS Safari under the back-to-
+      // back request volume a bulk download produces, even though
+      // event.waitUntil() is the spec-correct way to extend a fetch
+      // event's lifetime -- a "download complete" signal based on either
+      // of those alone isn't trustworthy. So this writes the response into
+      // Cache Storage directly from here instead of trusting that the
+      // in-flight request already got cached by the service worker: a
+      // page-side promise chain can be waited on directly and its
+      // resolution is a definite, checkable guarantee the full body was
+      // read and the write completed, rather than an assumption about a
+      // separate execution context's extended-lifetime behavior. This
+      // still lands in the exact same Cache Storage bucket the service
+      // worker's own opportunistic caching uses (RUNTIME_CACHE_NAME, kept
+      // in sync with sw.js's constant of the same name above), so a
+      // duplicate write there from the service worker's own fetch handler
+      // for this same request is harmless -- same content, same key.
+      // cache.put() itself needs an unconsumed response body to store it,
+      // so there's no separate res.blob() call needed here anymore --
+      // cache.put()'s own resolution already doesn't happen until the
+      // full body has been read, which is exactly the completion signal
+      // this needs.
       fetch(url, fetchOpts).then((res) => {
         const headersOk = crossOrigin ? true : !!(res && res.ok);
-        return res.blob().then(() => settle(headersOk), () => settle(false));
+        if (!headersOk) {
+          // Still fully consume the body so a failed/erroring response
+          // doesn't leave a request hanging before moving on.
+          return res.blob().then(() => settle(false), () => settle(false));
+        }
+        return caches.open(RUNTIME_CACHE_NAME).then((cache) => cache.put(url, res)).then(
+          () => settle(true),
+          () => settle(false)
+        );
       }, () => settle(false));
     }
     for (let c = 0; c < Math.min(concurrency, urls.length); c++) loadNext();
@@ -3559,121 +3582,17 @@
       .catch(() => callback(0, urls.length));
   }
 
-  // A plain fetch()-based download (downloadUrls() above, the same
-  // mechanism that reliably caches ticket JPGs and map tiles) has not
-  // reliably resulted in a usable offline copy of a ticket **PDF** on iOS
-  // Safari, even though the exact same file becomes usable offline the
-  // moment it's actually opened once through the real PDF viewer while
-  // online. The real viewer is <embed type="application/pdf"> (see
-  // renderTicketFileView()), which iOS Safari's native PDF plugin loads
-  // progressively via its own byte-range requests rather than one plain
-  // full GET -- a fetch() from JS never drives that same code path, and
-  // whatever iOS-specific behavior actually makes a PDF stick in Cache
-  // Storage apparently depends on going through it. Rather than continue
-  // guessing why a bare fetch() underperforms here, this drives that
-  // exact real path programmatically: a hidden, fully off-screen <embed>
-  // is pointed at the PDF, given a real chance to load, then removed.
-  function warmPdfViaEmbed(url, timeoutMs) {
-    return new Promise((resolve) => {
-      let settled = false;
-      const embed = document.createElement("embed");
-      embed.type = "application/pdf";
-      // position: fixed + a large negative offset (not display:none,
-      // which some browsers never actually load a resource for) keeps
-      // this fully outside the visible viewport regardless of whatever
-      // the PDF plugin tries to render inside it.
-      embed.style.position = "fixed";
-      embed.style.left = "-9999px";
-      embed.style.top = "0";
-      embed.style.width = "2px";
-      embed.style.height = "2px";
-      embed.style.pointerEvents = "none";
-      function finish() {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        embed.remove();
-        resolve();
-      }
-      const timer = setTimeout(finish, timeoutMs);
-      embed.addEventListener("load", finish);
-      embed.addEventListener("error", finish);
-      // Appended before src is set, so the element is already in the
-      // document tree (some browsers don't reliably start loading a
-      // detached element's resource).
-      document.body.appendChild(embed);
-      embed.src = url;
-    });
-  }
-
-  // Warms a list of PDF URLs one at a time (not concurrently -- several
-  // simultaneous native PDF plugin instances is heavier and less
-  // predictable on mobile than fetch() concurrency) via warmPdfViaEmbed().
-  // Success is judged afterward by real Cache Storage contents
-  // (countCachedUrls()), not the <embed>'s own load event -- same "trust
-  // actual cache state, not a completion signal" principle as the rest of
-  // this offline-data feature, since a load event firing is not itself
-  // proof the file was fully cached.
-  function warmPdfFiles(urls, onProgress, onDone) {
-    if (!urls.length) { onDone(0, 0); return; }
-    let i = 0;
-    function next() {
-      if (i >= urls.length) {
-        countCachedUrls(urls, (cached, total) => onDone(cached, total));
-        return;
-      }
-      warmPdfViaEmbed(urls[i], 20000).then(() => {
-        i++;
-        if (onProgress) onProgress(i, urls.length);
-        next();
-      });
-    }
-    next();
-  }
-
-  // Ticket-specific download entry point (used in place of downloadUrls()
-  // directly) -- routes PDFs through warmPdfFiles() above and everything
-  // else (ticket JPGs, which fetch()-based downloadUrls() already handles
-  // reliably) through the normal fetch() path, then combines progress/
-  // completion across both.
-  function downloadTicketFiles(urls, concurrency, onProgress, onDone) {
-    if (!urls.length) { onDone(0, 0); return; }
-    if (navigator.onLine === false) { onDone(0, urls.length); return; }
-    const pdfUrls = urls.filter((u) => /\.pdf$/i.test(u));
-    const otherUrls = urls.filter((u) => !/\.pdf$/i.test(u));
-    let otherDone = 0, pdfDone = 0;
-    let otherSucceeded = 0, pdfSucceeded = 0;
-    let otherSettled = otherUrls.length === 0;
-    let pdfSettled = pdfUrls.length === 0;
-
-    function reportProgress() {
-      if (onProgress) onProgress(otherDone + pdfDone, urls.length);
-    }
-    function maybeDone() {
-      if (otherSettled && pdfSettled) onDone(otherSucceeded + pdfSucceeded, urls.length);
-    }
-
-    if (otherUrls.length) {
-      downloadUrls(otherUrls, concurrency, null, (done) => {
-        otherDone = done;
-        reportProgress();
-      }, (succeeded) => {
-        otherSucceeded = succeeded;
-        otherSettled = true;
-        maybeDone();
-      });
-    }
-    if (pdfUrls.length) {
-      warmPdfFiles(pdfUrls, (done) => {
-        pdfDone = done;
-        reportProgress();
-      }, (succeeded) => {
-        pdfSucceeded = succeeded;
-        pdfSettled = true;
-        maybeDone();
-      });
-    }
-  }
+  // v70 tried to solve unreliable offline ticket PDFs by driving a hidden
+  // <embed type="application/pdf"> for each one (mimicking how manually
+  // opening a PDF once online reliably made it work offline) -- this
+  // still raced with the silent background prefetch/other re-renders in
+  // ways the dedup fix below didn't fully close, and risked iOS memory
+  // pressure from creating many native PDF plugin instances back-to-back.
+  // Removed in favor of a more direct fix in downloadUrls() itself: write
+  // the fetched response into Cache Storage straight from the page (see
+  // its doc comment) instead of depending on getting the browser's PDF
+  // viewer to make the "right" kind of request. Ticket PDFs now go
+  // through the exact same downloadUrls() path as everything else.
 
   // Both the silent background prefetch (prefetchTicketFiles()/
   // prefetchMapTiles(), on every app load) and the Checklist "Download"
@@ -3766,12 +3685,12 @@
   // connection is simply missing in airplane mode. ~9MB total across all
   // current tickets -- small enough to fetch in full on first load rather
   // than needing the zoom-level-style range logic prefetchMapTiles() has.
-  // v2: a plain fetch()-based download never reliably cached ticket PDFs
-  // for offline use on iOS Safari, even when it reported success -- see
-  // downloadTicketFiles()/warmPdfFiles()'s doc comments. Bumped so
-  // everyone's existing "done" flag (set by the old, PDF-unreliable v1
-  // prefetch) doesn't suppress a real retry under the new mechanism.
-  const TICKET_PREFETCH_VERSION = "v2";
+  // v3: earlier versions never reliably cached ticket PDFs for offline
+  // use on iOS Safari, even when they reported success -- see
+  // downloadUrls()'s doc comment for the current fix (writing directly to
+  // Cache Storage from the page). Bumped again so everyone's existing
+  // "done" flag doesn't suppress a real retry under this mechanism.
+  const TICKET_PREFETCH_VERSION = "v3";
   const TICKET_PREFETCH_KEY = "rougeux_tickets_prefetched";
 
   function prefetchTicketFiles() {
@@ -3783,13 +3702,12 @@
     // Lower concurrency than prefetchMapTiles()'s 6 -- these are
     // individual PDFs/JPGs up to ~2MB each (map tiles are a few KB), so
     // fewer of them in flight at once is politer to the connection.
-    // startDedupedDownload (not downloadTicketFiles() directly) so this
-    // merges into a Checklist "Download" tap already in flight for
-    // tickets, instead of racing it -- see its doc comment for why two
-    // independent runs used to look like the download restarting
-    // partway through.
+    // startDedupedDownload (not downloadUrls() directly) so this merges
+    // into a Checklist "Download" tap already in flight for tickets,
+    // instead of racing it -- see its doc comment for why two independent
+    // runs used to look like the download restarting partway through.
     startDedupedDownload(TICKET_PREFETCH_KEY, urls.length, (onProgress, onDone) => {
-      downloadTicketFiles(urls, 3, onProgress, onDone);
+      downloadUrls(urls, 3, null, onProgress, onDone);
     }, null, () => {
       try { localStorage.setItem(TICKET_PREFETCH_KEY, TICKET_PREFETCH_VERSION); } catch (e) {}
     });
