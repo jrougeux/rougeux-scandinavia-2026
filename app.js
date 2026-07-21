@@ -3076,6 +3076,14 @@
     }
 
     btn.addEventListener("click", () => {
+      // Checked here too (not just inside downloadUrls()) so the button
+      // can show a clear, specific message immediately -- rather than
+      // attempting anything first and only learning after the fact that
+      // nothing could have worked.
+      if (navigator.onLine === false) {
+        setProgress(0, urls.length, "You're offline — connect to WiFi or cellular data, then tap Download");
+        return;
+      }
       btn.disabled = true;
       setProgress(0, urls.length);
       downloadUrls(urls, concurrency, { crossOrigin }, (done, total) => setProgress(done, total), (succeeded, total) => {
@@ -3442,6 +3450,18 @@
   // ticket requests where res.ok is a real, readable signal.
   function downloadUrls(urls, concurrency, opts, onProgress, onDone) {
     if (!urls.length) { onDone(0, 0); return; }
+    // Defensive/uniform check for every caller (silent prefetches already
+    // checked this themselves before calling in, but the manual
+    // "Download" buttons didn't). Without it, tapping Download while
+    // genuinely offline (e.g. airplane mode) still attempted every
+    // fetch -- and since onProgress/the progress bar advance on *every*
+    // settled request regardless of success or failure, a batch of fast
+    // (or, depending on network conditions, up to the 30s-timeout-slow)
+    // failures still visually reads as real download progress happening,
+    // when nothing is actually being cached. Bailing out immediately
+    // here, before attempting a single request, is what lets the button
+    // show a clear "you're offline" message instead.
+    if (navigator.onLine === false) { onDone(0, urls.length); return; }
     let nextIndex = 0;
     let remaining = urls.length;
     let failedCount = 0;

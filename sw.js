@@ -1,4 +1,4 @@
-const CACHE_NAME = "rougeux-trip-v64";
+const CACHE_NAME = "rougeux-trip-v65";
 // Holds everything fetched at runtime and not part of the precached shell
 // below: map tiles (per-day canvas renderer and the trip-wide Leaflet
 // map, including the proactive prefetch in app.js) and ticket PDFs/JPGs.
@@ -82,7 +82,25 @@ self.addEventListener("fetch", (event) => {
           (response.status === 200 || response.type === "opaque");
         if (cacheable) {
           const copy = response.clone();
-          caches.open(RUNTIME_CACHE_NAME).then((cache) => cache.put(event.request, copy));
+          // event.waitUntil() here (not a bare, un-awaited promise) is
+          // load-bearing, not decorative: respondWith()'s own promise
+          // resolving (the `return response` below) is *all* the
+          // lifetime guarantee a fetch event gets by default -- the
+          // browser is free to suspend/terminate this service worker
+          // immediately afterward, with no obligation to let a separate,
+          // un-awaited cache.put() promise actually finish writing to
+          // disk. Without this, the page-side fetch() correctly
+          // resolves successfully (the response was real and already
+          // delivered), so app.js's bulk downloader reports "done" --
+          // while the cache.put() that was supposed to make the file
+          // available offline could get silently cut off mid-write,
+          // especially under the bulk downloader's several-requests-at-
+          // once concurrency. This is exactly what "the download says
+          // complete but the file still isn't there offline" looks like:
+          // a real bug in this handler, not a reporting bug in app.js.
+          event.waitUntil(
+            caches.open(RUNTIME_CACHE_NAME).then((cache) => cache.put(event.request, copy))
+          );
         }
         return response;
       }).catch(() => cached);

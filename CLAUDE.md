@@ -54,7 +54,22 @@ still dependency-free vanilla JS.
   since it's an uncredentialed cross-origin image load) as cacheable too,
   not just a real same-origin `200` — otherwise map tiles are silently
   never cached at all and the map goes blank offline even after being
-  viewed online. The `install` handler caches each `ASSETS` entry
+  viewed online. The actual `cache.put()` call in the `fetch` handler is
+  wrapped in `event.waitUntil()`, not left as a bare, un-awaited promise
+  — this is load-bearing, not decorative. `respondWith()`'s own promise
+  resolving is *all* the lifetime guarantee a fetch event gets by
+  default; the browser is free to suspend/terminate the service worker
+  immediately after the response is delivered, with no obligation to let
+  a separate, un-awaited `cache.put()` actually finish writing to disk.
+  Without `waitUntil()` here, a `fetch()` on the page side correctly
+  resolves successfully (the response was real and already delivered),
+  so `app.js`'s bulk downloaders (see "Offline data" below) correctly
+  report "done" — while the write that was supposed to make the file
+  available offline could get silently cut short mid-write, especially
+  under those downloaders' several-requests-at-once concurrency. This is
+  exactly what "the download says complete but the file still isn't
+  there offline" looks like: a real service-worker bug, not a reporting
+  bug in `app.js`. The `install` handler caches each `ASSETS` entry
   individually (`cache.add()` per URL, each wrapped in its own `.catch()`)
   rather than `cache.addAll(ASSETS)` — `addAll` is all-or-nothing, so one
   asset failing to fetch (a flaky edge/CDN blip during deploy) rejects the
@@ -157,6 +172,20 @@ still dependency-free vanilla JS.
   requested once on load (best-effort, silently ignored if unsupported or
   denied) to reduce the odds of exactly that kind of silent eviction in
   the first place.
+- `downloadUrls()` checks `navigator.onLine === false` and bails out
+  immediately (`onDone(0, urls.length)`) rather than attempting any
+  fetches — this matters specifically for the manual "Download" buttons,
+  which (unlike the silent background prefetches, which already checked
+  this before ever calling in) had no such guard: tapping Download while
+  genuinely offline used to still attempt every request. Since
+  `onProgress`/the progress bar advance on *every settled* request
+  regardless of success or failure, a batch of failures — however fast or
+  slow they resolve — still visually read as real download progress
+  happening even though nothing was actually being cached. The button's
+  own click handler also checks this directly (not just relying on
+  `downloadUrls()`'s internal guard) so it can show a specific "you're
+  offline" message immediately, instead of a generic post-hoc failure
+  count.
 
 ## Data shape
 
