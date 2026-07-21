@@ -120,6 +120,15 @@ still dependency-free vanilla JS.
   `images/`), loaded in `index.html` before `app.js`. Powers only the
   trip-wide "Map" bottom-nav view; the per-day Map sections still use the
   hand-rolled canvas renderer and don't need it
+- `assets/idb-keyval/idb-keyval.js` — vendored `idb-keyval` 6.3.0 (Apache-2.0,
+  by Jake Archibald), a small IndexedDB key-value wrapper, loaded in
+  `index.html` before `data.js`/`app.js`, exposing `window.idbKeyval`.
+  Used exclusively for ticket file storage (`downloadTicketsToIdb()`/
+  `countCachedTicketsIdb()`/`renderTicketFileView()` in `app.js`) — see
+  the "Offline ticket downloads" notes below for why tickets moved off
+  Cache Storage entirely. Precached in `sw.js`'s `ASSETS` list like every
+  other vendored dependency, since the app can't load it at all offline
+  otherwise
 - `assets/tickets/` — PDF/JPG train tickets, taxi receipts, tour vouchers,
   etc. Static site with no server, so there's no way to list this folder's
   contents at runtime — `TICKET_FILES` in `app.js` is a hand-maintained
@@ -406,6 +415,46 @@ still dependency-free vanilla JS.
   entire testing history in one action, cheap to recover from since
   everything here is just re-downloaded from this same static site.
   `TICKET_PREFETCH_VERSION` was bumped to `"v5"` alongside this.
+- None of the above fully solved it either — the exact same "reports
+  success, nothing real happens" symptom for ticket PDFs kept recurring
+  across several genuinely different, carefully-verified fix attempts
+  (event.waitUntil() wrapping, an `<embed>`-driven warmup, a single
+  direct page-side write, size-validated verification, a storage-quota
+  display, a full cache wipe). At that point the pattern itself was the
+  signal: not a bug in any one of those specific mechanisms, but Cache
+  Storage + the service worker's fetch-interception path being
+  fundamentally unreliable for this on iOS Safari. Ticket files (PDFs and
+  JPGs both, for consistency) now skip that path entirely and are stored
+  as raw `Blob`s in **IndexedDB** via `idb-keyval` (see `assets/idb-keyval/`
+  above) — `downloadTicketsToIdb()` fetches each file, verifies the
+  response (`res.ok`, byte size against `Content-Length`, same checks
+  `downloadUrls()` uses), and calls `idbKeyval.set(url, blob)`, itself
+  verified afterward with an independent `idbKeyval.get()` re-read
+  checked against the same size — not because IndexedDB is known to have
+  the same failure mode, but because "verify, don't trust a completion
+  signal" is a good practice regardless. `renderTicketFileView()` now
+  checks `idbKeyval.get(url)` first and, if a blob is there, creates a
+  local `URL.createObjectURL(blob)` for the `<img>`/`<embed>` `src`
+  instead of the plain network URL — offline viewing no longer involves
+  a network request or the service worker intercepting anything for
+  tickets at all, sidestepping the entire Range-request/206 problem
+  above along with it. Falls back to the plain network URL (works fine
+  online) if a ticket hasn't been downloaded yet.
+  `currentTicketObjectUrl`/`revokeCurrentTicketObjectUrl()` track and
+  release the one most-recently-created object URL so they don't
+  accumulate across a session (object URLs don't survive a reload anyway,
+  so this is a within-session hygiene concern, not a correctness one).
+  `renderOfflineDataRow()` was generalized to take `downloadFn`/`checkFn`
+  parameters instead of hardcoding Cache Storage calls, so it doesn't
+  need to know which backend a given resource actually uses — map tiles
+  still pass `downloadUrls()`/`countCachedUrls()` (Cache Storage has been
+  reasonably solid for tiles specifically; this migration is scoped to
+  tickets, the thing that actually kept failing). The Checklist tab's
+  "Clear cached data & start fresh" button now also calls
+  `idbKeyval.clear()` alongside its existing `caches.delete(...)`.
+  `TICKET_PREFETCH_VERSION` was bumped again (`"v6"`) so this new
+  mechanism gets a real first run rather than being suppressed by a
+  "done" flag set under any earlier one.
 
 ## Data shape
 

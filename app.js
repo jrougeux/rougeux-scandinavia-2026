@@ -2661,6 +2661,21 @@
   // via an <embed> (see the fuller reasoning below); the two .jpg tickets
   // via a plain <img>, relying on the page's own native pinch-zoom (the
   // viewport meta tag doesn't restrict scaling).
+  // Ticket files downloaded ahead of time (see downloadTicketsToIdb()
+  // below) live in IndexedDB, not Cache Storage -- offline viewing reads
+  // the blob back and creates a local blob: URL rather than making a
+  // network request the service worker would need to intercept and serve
+  // correctly. Only one of these is ever "current" at a time; revoking
+  // the previous one whenever a new one is created (or the view is left)
+  // keeps this from accumulating unreleased blob: URLs over a session.
+  let currentTicketObjectUrl = null;
+  function revokeCurrentTicketObjectUrl() {
+    if (currentTicketObjectUrl) {
+      URL.revokeObjectURL(currentTicketObjectUrl);
+      currentTicketObjectUrl = null;
+    }
+  }
+
   function renderTicketFileView(t) {
     const container = document.createElement("div");
     container.className = "ticket-file-view";
@@ -2684,9 +2699,10 @@
     label.textContent = t.time24 ? `${t.description} - ${formatTicketTime(t.time24)}` : t.description;
     header.appendChild(label);
 
+    const networkUrl = ticketFileUrl(t.filename);
     const openLink = document.createElement("a");
     openLink.className = "ticket-file-openlink";
-    openLink.href = ticketFileUrl(t.filename);
+    openLink.href = networkUrl;
     openLink.target = "_blank";
     openLink.rel = "noopener";
     openLink.textContent = "↗";
@@ -2700,6 +2716,7 @@
     // drag lands on.
     const frame = document.createElement("div");
     frame.className = "ticket-file-frame";
+    let mediaEl;
     if (t.ext === "jpg" || t.ext === "jpeg") {
       // A scrollable wrapper (rather than the image alone) so a tall/wide
       // image can be panned by dragging even before zooming in; native
@@ -2707,24 +2724,48 @@
       // on top of that for reading small text/QR codes.
       const wrap = document.createElement("div");
       wrap.className = "ticket-file-image-wrap";
-      const img = document.createElement("img");
-      img.className = "ticket-file-image";
-      img.src = ticketFileUrl(t.filename);
-      img.alt = t.description;
-      wrap.appendChild(img);
+      mediaEl = document.createElement("img");
+      mediaEl.className = "ticket-file-image";
+      mediaEl.alt = t.description;
+      wrap.appendChild(mediaEl);
       frame.appendChild(wrap);
     } else {
       // <embed> rather than <iframe> -- in an installed/standalone PWA on
       // iOS, a PDF inside an <iframe> often only gets a stripped-down,
       // single-page preview from WKWebView instead of the full multi-page
       // viewer a real top-level navigation to the same PDF gets.
-      const embed = document.createElement("embed");
-      embed.className = "ticket-file-pdf";
-      embed.src = ticketFileUrl(t.filename);
-      embed.type = "application/pdf";
-      frame.appendChild(embed);
+      mediaEl = document.createElement("embed");
+      mediaEl.className = "ticket-file-pdf";
+      mediaEl.type = "application/pdf";
+      frame.appendChild(mediaEl);
     }
     container.appendChild(frame);
+
+    // src is set below, once it's known whether a downloaded blob is
+    // available -- not synchronously here, since idbKeyval.get() is
+    // always async.
+    revokeCurrentTicketObjectUrl();
+    if (window.idbKeyval) {
+      idbKeyval.get(networkUrl).then((blob) => {
+        // The user may have navigated to a different ticket (or away
+        // entirely) before this resolved -- state.ticketFile is a stable
+        // reference into the same TICKETS_BY_DATE objects built once at
+        // module load, so this comparison is reliable. Setting .src on
+        // this render's now-detached mediaEl would be harmless either
+        // way, but skipping it also avoids creating/leaking an object
+        // URL for a ticket that's no longer being shown.
+        if (state.ticketFile !== t) return;
+        if (blob) {
+          currentTicketObjectUrl = URL.createObjectURL(blob);
+          mediaEl.src = currentTicketObjectUrl;
+          openLink.href = currentTicketObjectUrl;
+        } else {
+          mediaEl.src = networkUrl;
+        }
+      }).catch(() => { mediaEl.src = networkUrl; });
+    } else {
+      mediaEl.src = networkUrl;
+    }
 
     return container;
   }
@@ -3040,7 +3081,14 @@
   // "force" trigger -- with live progress, and updates the flag on
   // completion so the silent background prefetch doesn't redundantly
   // re-run next load.
-  function renderOfflineDataRow(title, urls, concurrency, crossOrigin, prefetchKey, prefetchVersion) {
+  // downloadFn(urls, concurrency, onProgress, onDone) and checkFn(urls,
+  // callback) are passed in explicitly rather than hardcoded, so this row
+  // doesn't need to know or care which storage backend a given resource
+  // actually uses underneath -- ticket files use IndexedDB
+  // (downloadTicketsToIdb()/countCachedTicketsIdb()) while map tiles use
+  // Cache Storage (downloadUrls()/countCachedUrls()); see CLAUDE.md for
+  // why tickets moved off Cache Storage entirely.
+  function renderOfflineDataRow(title, urls, concurrency, prefetchKey, prefetchVersion, downloadFn, checkFn) {
     const row = document.createElement("div");
     row.className = "offline-data-row";
 
@@ -3106,7 +3154,7 @@
       // its doc comment for why that used to look like the download
       // restarting partway through.
       startDedupedDownload(prefetchKey, urls.length, (progress, done) => {
-        downloadUrls(urls, concurrency, { crossOrigin }, progress, done);
+        downloadFn(urls, concurrency, progress, done);
       }, onProgress, onDone);
     });
 
@@ -3115,7 +3163,7 @@
     // instead of showing a "Checking…" cached-state snapshot that would
     // just be superseded a moment later anyway.
     if (!subscribeToActiveDownload(prefetchKey, onProgress, onDone)) {
-      countCachedUrls(urls, (cached, total) => setProgress(cached, total));
+      checkFn(urls, (cached, total) => setProgress(cached, total));
     }
 
     return row;
@@ -3161,22 +3209,26 @@
     const offlineCard = document.createElement("div");
     offlineCard.className = "offline-data-card";
     offlineCard.appendChild(renderOfflineDataRow(
-      "Tickets & vouchers", TICKET_FILES.map(ticketFileUrl), 3, false, TICKET_PREFETCH_KEY, TICKET_PREFETCH_VERSION
+      "Tickets & vouchers", TICKET_FILES.map(ticketFileUrl), 3, TICKET_PREFETCH_KEY, TICKET_PREFETCH_VERSION,
+      downloadTicketsToIdb, countCachedTicketsIdb
     ));
     offlineCard.appendChild(renderOfflineDataRow(
-      "Map tiles (Sweden & Norway)", buildMapPrefetchUrls(), 3, true, MAP_PREFETCH_KEY, MAP_PREFETCH_VERSION
+      "Map tiles (Sweden & Norway)", buildMapPrefetchUrls(), 3, MAP_PREFETCH_KEY, MAP_PREFETCH_VERSION,
+      (urls, concurrency, onProgress, onDone) => downloadUrls(urls, concurrency, { crossOrigin: true }, onProgress, onDone),
+      countCachedUrls
     ));
     const storageRow = renderStorageEstimateRow();
     if (storageRow) offlineCard.appendChild(storageRow);
 
-    // A hard reset: wipes the entire RUNTIME_CACHE_NAME bucket (every
-    // cached ticket and map tile) and both "done" flags, so a bad/stale
-    // entry left over from any earlier, broken write in this app's
-    // history can't keep silently interfering with a fresh download --
-    // existence/size checks (see downloadUrls()) catch a bad entry going
-    // forward, but this clears out anything already sitting there from
-    // before those checks existed. Cheap to recover from since everything
-    // here is just re-downloaded from this same static site.
+    // A hard reset: wipes the entire RUNTIME_CACHE_NAME Cache Storage
+    // bucket (map tiles) and every ticket blob in IndexedDB, plus both
+    // "done" flags, so any bad/stale entry left over from an earlier,
+    // broken write in this app's history can't keep silently interfering
+    // with a fresh download -- existence/size checks (see downloadUrls())
+    // catch a bad entry going forward, but this clears out anything
+    // already sitting there from before those checks existed. Cheap to
+    // recover from since everything here is just re-downloaded from this
+    // same static site.
     const clearBtn = document.createElement("button");
     clearBtn.type = "button";
     clearBtn.className = "offline-data-clear-btn";
@@ -3185,7 +3237,10 @@
       if (!window.confirm("This deletes every cached ticket and map tile so they can be freshly re-downloaded. Continue?")) return;
       clearBtn.disabled = true;
       clearBtn.textContent = "Clearing…";
-      caches.delete(RUNTIME_CACHE_NAME).then(() => {
+      Promise.all([
+        caches.delete(RUNTIME_CACHE_NAME),
+        window.idbKeyval ? idbKeyval.clear() : Promise.resolve()
+      ]).then(() => {
         try {
           localStorage.removeItem(TICKET_PREFETCH_KEY);
           localStorage.removeItem(MAP_PREFETCH_KEY);
@@ -3670,17 +3725,95 @@
       .catch(() => callback(0, urls.length));
   }
 
-  // v70 tried to solve unreliable offline ticket PDFs by driving a hidden
-  // <embed type="application/pdf"> for each one (mimicking how manually
-  // opening a PDF once online reliably made it work offline) -- this
-  // still raced with the silent background prefetch/other re-renders in
-  // ways the dedup fix below didn't fully close, and risked iOS memory
-  // pressure from creating many native PDF plugin instances back-to-back.
-  // Removed in favor of a more direct fix in downloadUrls() itself: write
-  // the fetched response into Cache Storage straight from the page (see
-  // its doc comment) instead of depending on getting the browser's PDF
-  // viewer to make the "right" kind of request. Ticket PDFs now go
-  // through the exact same downloadUrls() path as everything else.
+  // Ticket files (PDFs/JPGs) are downloaded into IndexedDB via
+  // idb-keyval (vendored under assets/idb-keyval/), not Cache Storage --
+  // several rounds of this app's history (see CLAUDE.md's "Offline
+  // ticket downloads" notes) tried increasingly elaborate fixes to make
+  // Cache Storage + the service worker reliably serve ticket PDFs
+  // offline on iOS Safari, and every one of them eventually reproduced
+  // some version of "reports success, nothing real happens" -- pointing
+  // at Cache Storage/service-worker reliability itself as the actual
+  // problem, not any particular bug in how this app was using it.
+  // IndexedDB has a longer, more mature track record for exactly this
+  // (storing large binary blobs reliably) on iOS Safari specifically.
+  // Storing the raw Blob directly, keyed by the same URL string
+  // ticketFileUrl() already produces, means renderTicketFileView() can
+  // read it straight back and hand the browser a local blob: URL
+  // (URL.createObjectURL()) instead of a network request that would need
+  // the service worker to intercept and serve correctly -- offline
+  // viewing no longer depends on the service worker at all for tickets.
+  // Map tiles are unaffected and stay on the Cache Storage path below
+  // (downloadUrls()/countCachedUrls()), which has been reasonably solid
+  // in practice -- this migration is specifically because tickets, not
+  // tiles, kept failing.
+  function downloadTicketsToIdb(urls, concurrency, onProgress, onDone) {
+    if (!urls.length) { onDone(0, 0); return; }
+    if (navigator.onLine === false) { onDone(0, urls.length); return; }
+    if (!window.idbKeyval) { onDone(0, urls.length); return; }
+    let nextIndex = 0;
+    let remaining = urls.length;
+    let failedCount = 0;
+
+    function loadNext() {
+      if (nextIndex >= urls.length) return;
+      const url = urls[nextIndex++];
+      let settledOnce = false;
+      const timeoutId = setTimeout(() => settle(false), 30000);
+      function settle(ok) {
+        if (settledOnce) return;
+        settledOnce = true;
+        clearTimeout(timeoutId);
+        remaining--;
+        if (!ok) failedCount++;
+        if (onProgress) onProgress(urls.length - remaining, urls.length);
+        if (remaining <= 0) onDone(urls.length - failedCount, urls.length);
+        else loadNext();
+      }
+      // cache: "reload" still matters here even though this no longer
+      // writes to Cache Storage at all -- every same-origin fetch,
+      // including this one, still passes through sw.js's fetch handler
+      // first, and without this it could get served back whatever (if
+      // anything) is still sitting in Cache Storage under this URL from
+      // this app's earlier, deprecated ticket-caching mechanisms, instead
+      // of a guaranteed-fresh network copy.
+      fetch(url, { cache: "reload" }).then((res) => {
+        if (!res || !res.ok) {
+          return res.blob().then(() => settle(false), () => settle(false));
+        }
+        const expectedLength = parseInt(res.headers.get("content-length") || "", 10) || null;
+        res.blob().then((blob) => {
+          if (!blob || blob.size === 0 || (expectedLength != null && blob.size < expectedLength * 0.9)) {
+            settle(false);
+            return;
+          }
+          idbKeyval.set(url, blob).then(
+            // Re-read the entry back independently rather than trusting
+            // idbKeyval.set()'s own resolution alone -- same "verify,
+            // don't just trust a completion signal" principle the rest
+            // of this offline-data feature already follows.
+            () => idbKeyval.get(url).then(
+              (check) => settle(!!check && check.size === blob.size),
+              () => settle(false)
+            ),
+            () => settle(false)
+          );
+        }, () => settle(false));
+      }, () => settle(false));
+    }
+    for (let c = 0; c < Math.min(concurrency, urls.length); c++) loadNext();
+  }
+
+  // Real, current presence check against IndexedDB -- mirrors
+  // countCachedUrls()'s role for Cache Storage-backed resources, used the
+  // same way (Checklist row status on mount, not a trusted localStorage
+  // flag).
+  function countCachedTicketsIdb(urls, callback) {
+    if (!urls.length) { callback(0, 0); return; }
+    if (!window.idbKeyval) { callback(0, urls.length); return; }
+    Promise.all(urls.map((u) => idbKeyval.get(u).then((v) => !!v).catch(() => false)))
+      .then((results) => callback(results.filter(Boolean).length, urls.length))
+      .catch(() => callback(0, urls.length));
+  }
 
   // Both the silent background prefetch (prefetchTicketFiles()/
   // prefetchMapTiles(), on every app load) and the Checklist "Download"
@@ -3767,23 +3900,19 @@
 
   // ---------------- Ticket file prefetch (offline-ready without opening first) ----------------
   // Same problem/shape as prefetchMapTiles() above, for assets/tickets/:
-  // the service worker's fetch handler only opportunistically caches a
-  // ticket once it's actually been opened (see the "assets/tickets/"
-  // note near the top of CLAUDE.md), so a file never viewed with a
-  // connection is simply missing in airplane mode. ~9MB total across all
-  // current tickets -- small enough to fetch in full on first load rather
-  // than needing the zoom-level-style range logic prefetchMapTiles() has.
-  // v5: earlier versions never reliably cached ticket PDFs for offline
-  // use on iOS Safari, even when they reported success -- see
-  // downloadUrls()'s doc comment for the current fix (a single direct
-  // page-side cache.put(), verified afterward against the real cached
-  // byte size, not just existence). Bumped again so everyone's existing
-  // "done" flag -- quite possibly set by a false success under an earlier
-  // mechanism -- doesn't suppress a real retry here. The Checklist tab's
-  // new "Clear cached data & start fresh" button (see renderChecklistView)
-  // also directly wipes any stale entries already sitting in
-  // RUNTIME_CACHE_NAME from before these checks existed.
-  const TICKET_PREFETCH_VERSION = "v5";
+  // a ticket never opened with a connection is simply missing in
+  // airplane mode. ~9MB total across all current tickets -- small enough
+  // to fetch in full on first load rather than needing the zoom-level-
+  // style range logic prefetchMapTiles() has.
+  // v6: several earlier mechanisms never reliably made ticket PDFs
+  // available offline on iOS Safari, even when they reported success --
+  // see downloadTicketsToIdb()'s doc comment above for the current
+  // approach (IndexedDB instead of Cache Storage entirely). Bumped again
+  // so everyone's existing "done" flag -- quite possibly set by a false
+  // success under an earlier mechanism -- doesn't suppress a real retry
+  // here. The Checklist tab's "Clear cached data & start fresh" button
+  // (see renderChecklistView) also directly clears IndexedDB.
+  const TICKET_PREFETCH_VERSION = "v6";
   const TICKET_PREFETCH_KEY = "rougeux_tickets_prefetched";
 
   function prefetchTicketFiles() {
@@ -3795,12 +3924,13 @@
     // Lower concurrency than prefetchMapTiles()'s 6 -- these are
     // individual PDFs/JPGs up to ~2MB each (map tiles are a few KB), so
     // fewer of them in flight at once is politer to the connection.
-    // startDedupedDownload (not downloadUrls() directly) so this merges
-    // into a Checklist "Download" tap already in flight for tickets,
-    // instead of racing it -- see its doc comment for why two independent
-    // runs used to look like the download restarting partway through.
+    // startDedupedDownload (not downloadTicketsToIdb() directly) so this
+    // merges into a Checklist "Download" tap already in flight for
+    // tickets, instead of racing it -- see its doc comment for why two
+    // independent runs used to look like the download restarting partway
+    // through.
     startDedupedDownload(TICKET_PREFETCH_KEY, urls.length, (onProgress, onDone) => {
-      downloadUrls(urls, 3, null, onProgress, onDone);
+      downloadTicketsToIdb(urls, 3, onProgress, onDone);
     }, null, () => {
       try { localStorage.setItem(TICKET_PREFETCH_KEY, TICKET_PREFETCH_VERSION); } catch (e) {}
     });
