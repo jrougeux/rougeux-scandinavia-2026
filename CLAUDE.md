@@ -298,31 +298,49 @@ Defined as CSS custom properties in `styles.css` (`:root`):
   is 45s (up from an original 20s) to reduce how often that retry/error
   cycle happens, though the real fix is not tearing tracking down on it.
 - The map legend (`.trip-map-legend`) is `position: fixed` to the bottom
-  of the screen, just above the bottom nav, rather than a normal-flow
-  strip below the map — always visible without scrolling, overlaying the
-  map/page rather than pushing content up. Adding bottom padding to
-  `.trip-map-view` to "reserve space" for it was tried and rejected: the
-  padding is invisible page background, so on a viewport taller than the
-  map+hint content, it just relocated the visible gap of bare `--bg` tan
-  rather than removing it, and left an asymmetric gap above the legend
-  with none below (the legend sits flush against the nav). The actual fix
-  is `min-height: calc(100vh - 40px)` plus `background: var(--surface-2)`
-  on `.trip-map-view` itself (matching the canvas's own placeholder
-  tone): that 40px deliberately undershoots the real header+nav overhead
-  (comfortably more than 40px on any device) so the container always ends
-  up at least as tall as the visible area above the fixed nav — worst
-  case a little extra scrollable room below the fold, permanently hidden
-  behind the fixed legend/nav, never a gap of exposed tan — and makes the
-  map read as flush with the legend above it too, matching the legend's
-  existing flush fit against the nav below (consistent spacing on both
-  sides, not just the bottom). It's a 3-column CSS grid sized to content
-  (`grid-template-columns: repeat(3, auto)`, not `1fr` or `flex-wrap`):
-  `1fr`/flex-wrap either stretch each column full-width (left-aligning a
-  short label like "POI" with a big gap after it) or can spill to a 3rd
-  line on a narrow phone with longer label text; `auto` columns plus
-  `justify-content` + `justify-items: center` guarantee exactly 2 rows
-  *and* keep the block centered with even spacing between every item,
-  regardless of viewport width.
+  of the screen, just above the bottom nav (with a deliberate +2px gap,
+  `bottom: calc(58px + safe-area)`, so it doesn't sit perfectly flush
+  against it), rather than a normal-flow strip below the map — always
+  visible without scrolling, overlaying the map/page rather than pushing
+  content up. There's no "Tap a city to zoom in..." hint above it
+  anymore (removed) — both `.trip-map-view` and `.trip-map-canvas` use
+  `min-height`/`height: calc(100vh - 40px)` respectively (see the
+  comment on `.trip-map-view`) so the *actual interactive map*, not just
+  a placeholder background, extends all the way down to the legend. That
+  40px deliberately undershoots the real header+nav overhead (comfortably
+  more than 40px on any device) so the map always ends up at least as
+  tall as the visible area above the fixed nav — worst case it extends a
+  little further than needed, invisible underneath the fixed legend/nav,
+  never a gap of exposed `--bg` tan showing through above them. It's a
+  3-column CSS grid sized to content (`grid-template-columns: repeat(3,
+  auto)`, not `1fr` or `flex-wrap`): `1fr`/flex-wrap either stretch each
+  column full-width (left-aligning a short label like "POI" with a big
+  gap after it) or can spill to a 3rd line on a narrow phone with longer
+  label text; `auto` columns plus `justify-content` + `justify-items:
+  center` guarantee exactly 2 rows *and* keep the block centered with
+  even spacing between every item, regardless of viewport width.
+- `.trip-map-canvas` has `isolation: isolate`, which is the actual fix
+  for the map permanently painting over the legend/bottom nav once the
+  canvas was made tall enough to extend underneath them (see above).
+  Leaflet sets `position: relative` on this element via inline style at
+  init, but `position: relative` alone does **not** establish a new CSS
+  stacking context (that also needs an explicit `z-index`) — so without
+  this, Leaflet's own internal panes/controls (`assets/leaflet/
+  leaflet.css` gives them z-index values up to 1000, e.g. its popup pane
+  and controls) weren't contained within the map: they escaped and
+  stacked directly against page-level siblings like `.bottom-nav`
+  (z-index 30) and `.trip-map-legend` (z-index 15), and *won*, since
+  1000 > 30, covering both permanently rather than just during a pan.
+  `isolation: isolate` forces proper containment without having to
+  out-number Leaflet's own z-index scheme. `.trip-map-legend` and
+  `.bottom-nav` also both carry `transform: translateZ(0)` as a separate,
+  smaller defensive measure against a *different*, WebKit-specific bug
+  where a `position: fixed` element can still lose to hardware-
+  accelerated sibling content (Leaflet's `translate3d()` pan animations)
+  unless it's also promoted to its own compositing layer — this one is
+  Safari/iOS-only and wasn't the actual cause of the reported bug (which
+  reproduced in Chrome/Firefox too, ruling out a WebKit-only
+  explanation), but is cheap, harmless, and worth keeping regardless.
 - Walking legs can also introduce a pin, not just activity/dining/transport
   ones -- e.g. day 14 leg 151 ("Bryggen") is a plain walking destination
   with no activity/dining leg of its own, so without this it wouldn't

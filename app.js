@@ -2223,11 +2223,6 @@
     mapEl.className = "trip-map-canvas";
     container.appendChild(mapEl);
 
-    const hint = document.createElement("p");
-    hint.className = "trip-map-hint";
-    hint.textContent = "Tap a city to zoom in, then tap any pin for details.";
-    container.appendChild(hint);
-
     const legend = document.createElement("div");
     legend.className = "trip-map-legend";
     legend.innerHTML = `

@@ -727,6 +727,13 @@ input:focus-visible {
   border-top: 1px solid var(--line);
   z-index: 30;
   padding-bottom: env(safe-area-inset-bottom, 0);
+  /* Forces its own compositing layer -- a known iOS Safari/WebKit bug
+     lets position:fixed elements render *behind* sibling content that
+     uses hardware-accelerated transforms (e.g. Leaflet's translate3d()
+     pan/zoom animations on the trip map), regardless of z-index, unless
+     the fixed element is also promoted to a compositing layer. Without
+     this, the map briefly painted over the bottom nav during a pan. */
+  transform: translateZ(0);
 }
 .bottom-nav button {
   flex: 1;
@@ -787,21 +794,29 @@ input:focus-visible {
    matches the canvas's own placeholder background, so the map now reads
    as flush with the legend above it too, not just the nav below. */
 .trip-map-view {
-  padding: 0 0 16px;
+  padding: 0;
   min-height: calc(100vh - 40px);
   background: var(--surface-2);
 }
+/* Matches .trip-map-view's own min-height (see the comment there) so the
+   actual interactive map -- not just the container's placeholder
+   background -- extends all the way down to the legend, instead of a
+   fixed vh-based height that could leave a visible gap above it. */
 .trip-map-canvas {
   width: 100%;
-  height: 68vh;
+  height: calc(100vh - 40px);
   min-height: 360px;
   background: var(--surface-2);
-}
-.trip-map-hint {
-  margin: 10px 16px 0;
-  font-size: 14px;
-  color: var(--text-faint);
-  text-align: center;
+  /* Leaflet sets position:relative on this element via inline style at
+     init, but position:relative alone does NOT establish a new CSS
+     stacking context (that needs an explicit z-index too) -- so without
+     this, Leaflet's internal panes/controls (whose own z-index values go
+     up to 1000, see assets/leaflet/leaflet.css) aren't contained: they
+     escape and stack directly against page-level siblings like
+     .bottom-nav (z-index 30) and .trip-map-legend (z-index 15), and
+     *win*, since 1000 > 30. isolation:isolate forces the containment
+     without needing to fight Leaflet's own z-index scheme by number. */
+  isolation: isolate;
 }
 /* Fixed to the bottom of the screen (just above the bottom nav) so it's
    always visible without scrolling, rather than a normal-flow strip
@@ -816,8 +831,12 @@ input:focus-visible {
   position: fixed;
   left: 0;
   right: 0;
-  bottom: calc(56px + env(safe-area-inset-bottom, 0px));
+  /* +2px so the legend doesn't sit flush against the bottom nav. */
+  bottom: calc(58px + env(safe-area-inset-bottom, 0px));
   z-index: 15;
+  /* See the same fix on .bottom-nav above -- without its own compositing
+     layer, this also briefly gets painted over by the map during a pan. */
+  transform: translateZ(0);
   display: grid;
   grid-template-columns: repeat(3, auto);
   justify-content: center;
