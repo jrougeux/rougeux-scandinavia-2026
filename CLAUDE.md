@@ -341,6 +341,28 @@ Defined as CSS custom properties in `styles.css` (`:root`):
   Safari/iOS-only and wasn't the actual cause of the reported bug (which
   reproduced in Chrome/Firefox too, ruling out a WebKit-only
   explanation), but is cheap, harmless, and worth keeping regardless.
+- `.trip-map-view`/`.trip-map-canvas` declare their `min-height`/`height`
+  twice: once as `calc(100vh - 40px)`, then again as `calc(100dvh -
+  40px)` (a browser without `dvh` support just ignores the second,
+  invalid-to-it declaration and keeps the first). Plain `100vh` in Safari
+  measures against the *largest* possible viewport, as if the address
+  bar were always hidden, so the actually-visible area can be shorter
+  than `100vh` by the address bar's height — this was enough to tuck the
+  Leaflet zoom control's top edge under the sticky header by a few
+  pixels, Safari-only (Chrome doesn't have this quirk). `100dvh`
+  ("dynamic viewport height") tracks the address bar's real shown/hidden
+  state instead.
+- Leaflet's own zoom animation (`.leaflet-zoom-anim .leaflet-zoom-
+  animated`, a `transform` transition) and tile loading (`.leaflet-tile`,
+  toggled via `visibility` — an on/off switch, not something a CSS
+  transition can animate) are both overridden in `styles.css`, loaded
+  after `leaflet.css` in `index.html` so these same-specificity selectors
+  win without `!important`: the zoom transform transition is slowed from
+  Leaflet's default 0.25s to 0.4s, and tiles get an `opacity` fade-in
+  layered on top of (not replacing) Leaflet's own `visibility` toggle.
+  Together these soften what was a hard, instant pop on every zoom/tile
+  load -- which also made `.trip-map-canvas`'s own placeholder background
+  (`--surface-2`) flash starkly in the gap before new tiles appeared.
 - Walking legs can also introduce a pin, not just activity/dining/transport
   ones -- e.g. day 14 leg 151 ("Bryggen") is a plain walking destination
   with no activity/dining leg of its own, so without this it wouldn't

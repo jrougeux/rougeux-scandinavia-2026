@@ -796,6 +796,16 @@ input:focus-visible {
 .trip-map-view {
   padding: 0;
   min-height: calc(100vh - 40px);
+  /* 100dvh ("dynamic viewport height") accounts for Safari's address
+     bar showing/hiding as you scroll -- plain 100vh in Safari measures
+     against the *largest* possible viewport (as if the address bar were
+     always hidden), so the actual visible area can be shorter than
+     100vh by the address bar's height, which was enough to tuck the
+     Leaflet zoom control's top edge under the sticky header by a few
+     px. Chrome doesn't have this quirk, which is why it was Safari-only.
+     Browsers without dvh support simply ignore this line and keep the
+     100vh value above. */
+  min-height: calc(100dvh - 40px);
   background: var(--surface-2);
 }
 /* Matches .trip-map-view's own min-height (see the comment there) so the
@@ -805,6 +815,9 @@ input:focus-visible {
 .trip-map-canvas {
   width: 100%;
   height: calc(100vh - 40px);
+  /* See .trip-map-view above for why -- same Safari address-bar quirk,
+     same "ignored by browsers without dvh support" fallback pattern. */
+  height: calc(100dvh - 40px);
   min-height: 360px;
   background: var(--surface-2);
   /* Leaflet sets position:relative on this element via inline style at
@@ -964,6 +977,26 @@ input:focus-visible {
 .leaflet-popup-tip { background: var(--surface); }
 .leaflet-container { font-family: var(--font-body); }
 .leaflet-control-attribution { font-size: 11px; }
+
+/* Softer, slower zoom transition than Leaflet's default (0.25s), and a
+   fade-in for tiles as they load instead of an instant hard pop --
+   Leaflet's own leaflet.css toggles tiles via `visibility` (an on/off
+   switch, not animatable), which combined with the fast default zoom
+   transform is what made zooming feel harsh, and made the container's
+   own placeholder background (--surface-2) flash starkly in the gap
+   before new tiles appear. Loaded after leaflet.css (see index.html), so
+   these same-specificity selectors win in the cascade without needing
+   !important. */
+.leaflet-zoom-anim .leaflet-zoom-animated {
+  transition: transform 0.4s ease-out;
+}
+.leaflet-tile {
+  opacity: 0;
+  transition: opacity 0.25s ease-out;
+}
+.leaflet-tile-loaded {
+  opacity: 1;
+}
 
 /* "Current Location" control -- stacks in the same top-left corner as
    (directly below) Leaflet's own zoom control via leaflet-bar's default
