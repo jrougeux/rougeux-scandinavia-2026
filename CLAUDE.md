@@ -523,6 +523,34 @@ still dependency-free vanilla JS.
   scripted test covering a partial resume (6 of 10 already stored, only
   the remaining 4 fetched), a fresh start (all 10 fetched), and an
   already-fully-downloaded set (0 fetched).
+- Resumability alone still wasn't enough: a full map tile run could
+  visually complete (the progress bar reaching 100%, since it counts
+  every *attempt* settling, not just successes) and then report back
+  down near 0 succeeded, with nothing actually retrievable afterward --
+  at ~2,400 tiles, not the ~28 ticket files this same code handles fine.
+  The per-tile `idbKeyval.set()` immediately followed by an
+  `idbKeyval.get()` re-read (added specifically to catch a write that
+  reports success without anything real happening -- see above) was
+  itself insufficiently trustworthy at this scale: an immediate read-back
+  can succeed off an in-memory/write-behind state that hasn't necessarily
+  been durably flushed to disk yet, the same underlying class of problem
+  this saga hit with Cache Storage's `event.waitUntil()`, just surfacing
+  differently here. `downloadToIdb()`'s real, trusted success count no
+  longer comes from tallying each tile's in-loop verification result --
+  `finalizeWithRealCheck()` does one further, separate
+  `idbKeyval.getMany()` pass over the *entire* original url list only
+  after every fetch/write attempt has already settled, and *that* final
+  state (not the optimistic per-tile flags accumulated during the run) is
+  what gets reported to `onDone`. Verified with a scripted test where 4 of
+  10 writes are "phantom" (the in-loop `set()`/`get()` pair reports
+  success, but the data was never truly, durably persisted) -- `onDone`
+  now correctly reports `6/10`, not the `10/10` the in-loop checks alone
+  would have claimed. Map tile concurrency was also dropped to `1` (fully
+  sequential, down from `3`) in both `prefetchMapTiles()` and the
+  Checklist row -- several concurrent IndexedDB writes in flight at once
+  is a second plausible contributor to the same unreliability at this
+  scale, on top of already being politer to `tile.openstreetmap.org`'s
+  rate limits.
 
 ## Data shape
 

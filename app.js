@@ -3299,7 +3299,11 @@
       countCachedIdb
     ));
     offlineCard.appendChild(renderOfflineDataRow(
-      "Map tiles (Sweden & Norway)", buildMapPrefetchUrls(), 3, MAP_PREFETCH_KEY, MAP_PREFETCH_VERSION,
+      // Concurrency 1 (fully sequential), not 3 -- see downloadToIdb()'s
+      // doc comment on finalizeWithRealCheck() for why: at ~2,400 tiles,
+      // several concurrent IndexedDB writes in flight at once has not
+      // proven as reliable in practice as ticket downloads' lighter load.
+      "Map tiles (Sweden & Norway)", buildMapPrefetchUrls(), 1, MAP_PREFETCH_KEY, MAP_PREFETCH_VERSION,
       (urls, concurrency, onProgress, onDone) => downloadToIdb(urls, concurrency, { crossOrigin: true }, onProgress, onDone),
       countCachedIdb
     ));
@@ -3721,19 +3725,41 @@
     );
     const total = urls.length;
 
+    // A per-tile idbKeyval.get() re-read immediately after idbKeyval.set()
+    // resolves (below) has not, in practice, proven sufficient at map-tile
+    // scale (~2,400 writes) the way it has for ~28 ticket files -- a run
+    // could visually complete (the progress bar reaching 100%, since it
+    // counts every *attempt* settling, not just successes) yet nothing
+    // was actually retrievable afterward. An immediate read-back can
+    // succeed off an in-memory/write-behind state that hasn't necessarily
+    // been durably flushed to disk yet -- the same underlying class of
+    // problem this saga hit with Cache Storage's event.waitUntil(), just
+    // surfacing at a different scale/timing here. So the real, trusted
+    // success count this function reports is a SEPARATE, final
+    // idbKeyval.getMany() pass over the *entire* original url list, done
+    // only after every fetch/write attempt has already settled and some
+    // real time has passed -- not the accumulated per-tile "succeeded"
+    // flags from during the run.
+    function finalizeWithRealCheck() {
+      idbKeyval.getMany(urls).then((finalState) => {
+        const realSucceeded = finalState.filter((b) => b && b.size > 0).length;
+        onDone(realSucceeded, total);
+      }).catch(() => onDone(0, total));
+    }
+
     // Runs the actual fetch loop over `pending` (the subset of `urls`
     // not already sitting in IndexedDB -- see the getMany() check below),
-    // with `alreadyGoodCount` folded into progress/completion from the
-    // start. settledTotal counts every *attempt* settling (success or
-    // failure, starting from alreadyGoodCount so the progress bar reads
-    // as a fraction of the *original* full url list, not just the
-    // still-pending remainder); succeededTotal is the real count onDone
-    // reports.
+    // with `alreadyGoodCount` folded into progress from the start.
+    // settledTotal counts every *attempt* settling (success or failure,
+    // starting from alreadyGoodCount so the progress bar reads as a
+    // fraction of the *original* full url list, not just the
+    // still-pending remainder) -- the real, final success count reported
+    // to onDone comes from finalizeWithRealCheck() above, not from
+    // tallying these per-tile results directly.
     function runPending(pending, alreadyGoodCount) {
       let settledTotal = alreadyGoodCount;
-      let succeededTotal = alreadyGoodCount;
       if (onProgress) onProgress(settledTotal, total);
-      if (!pending.length) { onDone(succeededTotal, total); return; }
+      if (!pending.length) { finalizeWithRealCheck(); return; }
 
       let nextIndex = 0;
       function loadNext() {
@@ -3746,9 +3772,8 @@
           settledOnce = true;
           clearTimeout(timeoutId);
           settledTotal++;
-          if (ok) succeededTotal++;
           if (onProgress) onProgress(settledTotal, total);
-          if (settledTotal >= total) onDone(succeededTotal, total);
+          if (settledTotal >= total) finalizeWithRealCheck();
           else loadNext();
         }
         fetch(url, fetchOpts).then((res) => {
@@ -3877,17 +3902,19 @@
     });
   }
 
-  // Best-effort, low-priority background fetch: a bounded number of tile
-  // requests run concurrently (politer to the tile server and the
-  // device's network than firing hundreds at once -- 3, not a more
-  // aggressive number, since tile.openstreetmap.org's usage policy
-  // actively rate-limits/blocks bulk-looking request patterns, and a
-  // ~2,400-tile burst at high concurrency risks exactly that; a
-  // rate-limited response still resolves rather than rejecting, so it'd
-  // be miscounted as a successful fetch of an error response instead of
-  // the real tile -- plausibly part of why some zoom levels come back
-  // incomplete), and the prefetch is only marked "done" in localStorage
-  // once every tile has resolved (success or failure) -- so an
+  // Best-effort, low-priority background fetch: tile requests run fully
+  // sequentially, concurrency 1 (not higher) for two independent reasons
+  // -- politer to the tile server than firing many at once (tile.
+  // openstreetmap.org's usage policy actively rate-limits/blocks bulk-
+  // looking request patterns; a rate-limited response still resolves
+  // rather than rejecting, though downloadToIdb()'s non-zero-blob-size
+  // check now catches an empty one), and, more importantly, several
+  // concurrent IndexedDB writes in flight at once has not proven as
+  // reliable in practice at this scale (~2,400 tiles) as it has for
+  // ticket downloads' much lighter load -- see downloadToIdb()'s
+  // finalizeWithRealCheck() doc comment. The prefetch is only marked
+  // "done" in localStorage once the final real-state check (not just
+  // in-loop optimism) confirms every tile actually landed -- so an
   // interrupted first run (e.g. the tab closed early) retries in full
   // next time instead of silently staying incomplete forever.
   function prefetchMapTiles() {
@@ -3900,7 +3927,7 @@
     // into a Checklist "Download" tap already in flight for map tiles,
     // instead of racing it -- see startDedupedDownload's doc comment.
     startDedupedDownload(MAP_PREFETCH_KEY, urls.length, (onProgress, onDone) => {
-      downloadToIdb(urls, 3, { crossOrigin: true }, onProgress, onDone);
+      downloadToIdb(urls, 1, { crossOrigin: true }, onProgress, onDone);
     }, null, () => {
       try { localStorage.setItem(MAP_PREFETCH_KEY, MAP_PREFETCH_VERSION); } catch (e) {}
     });
