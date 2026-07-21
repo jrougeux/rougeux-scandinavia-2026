@@ -237,14 +237,43 @@ Defined as CSS custom properties in `styles.css` (`:root`):
   map's pan/zoom state below, it's in-memory only and starts fresh (off)
   on a full reload, so the app never silently starts requesting location
   on launch.
+- `onLocationError()` only treats `PERMISSION_DENIED` (`err.code === 1`)
+  as fatal (deactivates tracking + an explicit permissions message).
+  `POSITION_UNAVAILABLE`/`TIMEOUT` are left alone entirely -- no
+  deactivation, no touching `locationTrackingActive` or the watch -- with
+  at most one non-fatal "still waiting" alert per activation
+  (`locationErrorAlertShown`), since `watchPosition` keeps retrying
+  automatically after either and could otherwise re-fire the same error
+  repeatedly. This matters a lot in airplane mode specifically: GPS
+  itself doesn't need a network connection, but the fast "assisted GPS"
+  first-fix path normally does (it uses cell/WiFi data to shortcut the
+  satellite search), so a cold GPS-only fix with airplane mode on can
+  legitimately take 30-90+ seconds outdoors, or fail indoors entirely.
+  Treating that as a fatal permissions error (the original behavior) was
+  a bug, not a real permissions problem -- it killed tracking after one
+  slow attempt and blamed Location Services settings for what was really
+  just "still waiting for a satellite lock." `GEO_WATCH_OPTIONS.timeout`
+  is 45s (up from an original 20s) to reduce how often that retry/error
+  cycle happens, though the real fix is not tearing tracking down on it.
 - The map legend (`.trip-map-legend`) is `position: fixed` to the bottom
   of the screen, just above the bottom nav, rather than a normal-flow
   strip below the map — always visible without scrolling, overlaying the
-  map/page rather than pushing content up (deliberately no compensating
-  bottom padding on `.trip-map-view` — that was tried and produced a
-  visible gap of bare page background between the map content and the
-  fixed legend, since the map/hint rarely reach the very bottom of the
-  viewport on their own). It's a 3-column CSS grid sized to content
+  map/page rather than pushing content up. Adding bottom padding to
+  `.trip-map-view` to "reserve space" for it was tried and rejected: the
+  padding is invisible page background, so on a viewport taller than the
+  map+hint content, it just relocated the visible gap of bare `--bg` tan
+  rather than removing it, and left an asymmetric gap above the legend
+  with none below (the legend sits flush against the nav). The actual fix
+  is `min-height: calc(100vh - 40px)` plus `background: var(--surface-2)`
+  on `.trip-map-view` itself (matching the canvas's own placeholder
+  tone): that 40px deliberately undershoots the real header+nav overhead
+  (comfortably more than 40px on any device) so the container always ends
+  up at least as tall as the visible area above the fixed nav — worst
+  case a little extra scrollable room below the fold, permanently hidden
+  behind the fixed legend/nav, never a gap of exposed tan — and makes the
+  map read as flush with the legend above it too, matching the legend's
+  existing flush fit against the nav below (consistent spacing on both
+  sides, not just the bottom). It's a 3-column CSS grid sized to content
   (`grid-template-columns: repeat(3, auto)`, not `1fr` or `flex-wrap`):
   `1fr`/flex-wrap either stretch each column full-width (left-aligning a
   short label like "POI" with a big gap after it) or can spill to a 3rd

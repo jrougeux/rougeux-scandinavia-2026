@@ -1694,9 +1694,16 @@
   let userLocationAccuracyLayer = null; // L.circle: real-world accuracy radius
   let locationButtonEl = null; // the custom Leaflet control's <a>, for toggling its "active" look
   let pendingInitialCenter = false; // true from activation until the first fix arrives, so we center the map exactly once per activation, not on every update
+  let locationErrorAlertShown = false; // one non-fatal error message per activation, not one per retry (see onLocationError)
   let orientationListenerAttached = false;
 
-  const GEO_WATCH_OPTIONS = { enableHighAccuracy: true, maximumAge: 5000, timeout: 20000 };
+  // timeout is generous (45s, up from an original 20s) since a cold
+  // GPS-only fix -- no cell/WiFi-assisted positioning to speed things up,
+  // e.g. in airplane mode -- can take a while; watchPosition keeps
+  // retrying on its own after each timeout regardless (see
+  // onLocationError), so this mainly just cuts down on how often that
+  // happens rather than being a hard cutoff.
+  const GEO_WATCH_OPTIONS = { enableHighAccuracy: true, maximumAge: 5000, timeout: 45000 };
 
   // Standard "my location" crosshair glyph (ring + center dot + 4 tick
   // marks) -- currentColor so CSS can recolor it for the active state.
@@ -1715,7 +1722,12 @@
   }
 
   function userLocationDivIcon(heading) {
-    const cone = heading == null ? "" : `<div class="user-loc-cone" style="transform: translate(-50%, -100%) rotate(${heading}deg);"></div>`;
+    // Positioning (centering the cone's bottom point on the dot) is
+    // already fully handled by .user-loc-cone's own left/top/margin in
+    // CSS -- only the rotation belongs here. Applying translate(-50%,
+    // -100%) again on top of that double-offsets the cone away from the
+    // dot instead of pivoting around it.
+    const cone = heading == null ? "" : `<div class="user-loc-cone" style="transform: rotate(${heading}deg);"></div>`;
     return L.divIcon({
       className: "user-loc-icon",
       html: `${cone}<div class="user-loc-dot"></div>`,
@@ -1823,10 +1835,31 @@
     }
   }
 
-  function onLocationError() {
-    pendingInitialCenter = false;
-    deactivateLocationTracking();
-    alert("Couldn't get your location. Check that Location Services are allowed for this site in your device settings.");
+  // Only PERMISSION_DENIED is actually fatal. POSITION_UNAVAILABLE and
+  // TIMEOUT are routine and expected the first time a fix is requested
+  // with no cell/WiFi-assisted positioning to speed things up (airplane
+  // mode, or just a device that hasn't gotten a GPS lock recently) -- a
+  // cold GPS-only fix can legitimately take 30-90+ seconds outdoors and
+  // may never arrive at all indoors. watchPosition keeps retrying
+  // automatically after either of those, so treating them as fatal (the
+  // original behavior) killed tracking and blamed "Location Services"
+  // permissions for what was really just "still waiting for a satellite
+  // lock." Only surface a message once per activation (watchPosition can
+  // re-fire timeout errors repeatedly while it keeps trying), and don't
+  // touch locationTrackingActive/the watch at all for these -- let it
+  // keep trying silently in the background.
+  function onLocationError(err) {
+    const code = err && err.code;
+    if (code === 1) { // PERMISSION_DENIED
+      pendingInitialCenter = false;
+      deactivateLocationTracking();
+      alert("Location access was denied. Check that Location Services are allowed for this site in your device settings.");
+      return;
+    }
+    if (pendingInitialCenter && !locationErrorAlertShown) {
+      locationErrorAlertShown = true;
+      alert("Still waiting for a GPS fix -- this can take longer than usual in airplane mode or indoors. Tracking will keep trying in the background, and the map will center as soon as it gets one.");
+    }
   }
 
   function activateLocationTracking() {
@@ -1836,6 +1869,7 @@
     }
     locationTrackingActive = true;
     pendingInitialCenter = true;
+    locationErrorAlertShown = false;
     locationWatchId = navigator.geolocation.watchPosition(onLocationUpdate, onLocationError, GEO_WATCH_OPTIONS);
     attachOrientationListener();
     updateLocationButtonUI();
