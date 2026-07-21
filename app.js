@@ -3724,6 +3724,23 @@
       crossOrigin ? { mode: "no-cors" } : null
     );
     const total = urls.length;
+    // tile.openstreetmap.org's usage policy asks for no more than ~2
+    // requests/second and explicitly discourages bulk downloading --
+    // reducing concurrency to 1 (see the Checklist row/prefetchMapTiles()
+    // call sites) wasn't itself enough to respect that, since with no
+    // delay between requests, one settling and immediately starting the
+    // next can still fire well over 2/second on a fast connection. A
+    // rate-limited/blocked response can still *resolve* (rather than
+    // reject) as a non-empty opaque response -- passing the non-zero-
+    // blob-size check below even though it's a block page, not a real
+    // tile -- which is a plausible explanation for a run that visually
+    // reaches 100% (every attempt still "settles") while almost nothing
+    // real ends up persisted, identically on any browser, since this
+    // would be a server policy response rather than a storage bug at
+    // all. This delay only applies to cross-origin (tile) requests --
+    // same-origin ticket requests have no third-party rate limit to
+    // respect.
+    const minDelayMs = crossOrigin ? 600 : 0;
 
     // A per-tile idbKeyval.get() re-read immediately after idbKeyval.set()
     // resolves (below) has not, in practice, proven sufficient at map-tile
@@ -3774,6 +3791,7 @@
           settledTotal++;
           if (onProgress) onProgress(settledTotal, total);
           if (settledTotal >= total) finalizeWithRealCheck();
+          else if (minDelayMs > 0) setTimeout(loadNext, minDelayMs);
           else loadNext();
         }
         fetch(url, fetchOpts).then((res) => {

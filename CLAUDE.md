@@ -551,6 +551,47 @@ still dependency-free vanilla JS.
   is a second plausible contributor to the same unreliability at this
   scale, on top of already being politer to `tile.openstreetmap.org`'s
   rate limits.
+- Even concurrency 1 wasn't enough -- a full map tile run still visually
+  completed and then reported back down near zero real bytes stored
+  (confirmed via the Checklist tab's storage-usage display), and
+  critically, **this reproduced identically in both Chrome and Safari**,
+  installed or not. That single fact ruled out every theory up to this
+  point in the saga (Cache Storage reliability, IndexedDB write-
+  durability timing, storage quota -- quota specifically was ruled out
+  directly, since both browsers reported well under 1% of their
+  available quota in use) -- those are all engine/OS-specific, and would
+  not be expected to reproduce identically across two completely
+  different browser storage implementations. The actual likely cause:
+  `tile.openstreetmap.org`'s usage policy explicitly asks for no more
+  than ~2 requests/second and discourages bulk downloading outright --
+  and this app had, by this point in its history, hit that server with a
+  ~2,400-tile bulk-download attempt many times over. A rate-limited or
+  blocked response can still *resolve* (rather than reject) as a non-
+  empty opaque cross-origin response -- passing the non-zero-blob-size
+  check `downloadToIdb()` already had, since that check can only catch a
+  truly *empty* body, not a small block/error page's worth of bytes,
+  which is all an opaque response's introspection-proof design leaves
+  available to check. That would explain a run visually reaching 100%
+  (every attempt still "settles," blocked or not) while almost nothing
+  real ends up persisted -- identically on any browser, since this is a
+  server-side policy response, not a storage bug at all. `downloadToIdb()`
+  now enforces a minimum delay between requests for cross-origin (tile)
+  URLs specifically (`minDelayMs`, `600`ms -- comfortably under the
+  stated ~2/second ceiling) -- same-origin ticket requests have no such
+  delay, since there's no third-party rate limit to respect there. This
+  makes a full tile download noticeably slower (once concurrency-1
+  serial fetches are also each spaced ~600ms apart, ~2,400 tiles is
+  comfortably tens of minutes), but reliability matters more than speed
+  for a background prefetch. Verified the delay is actually being
+  applied (a scripted test confirming `setTimeout(loadNext, 600)` fires
+  between cross-origin requests, with no such delay for same-origin
+  ones) -- note this only proves the throttle is wired correctly, not
+  that it resolves real-world rate-limiting, which can't be verified
+  without hitting the real tile server. It's also possible this app's
+  IP/session has already accumulated enough of a poor reputation with
+  the tile server from this saga's many earlier bulk-download attempts
+  that throttling correctly going forward doesn't immediately clear
+  whatever cooldown/block period, if any, is already in effect.
 
 ## Data shape
 
