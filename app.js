@@ -3346,6 +3346,62 @@
     for (let c = 0; c < Math.min(CONCURRENCY, urls.length); c++) loadNext();
   }
 
+  // ---------------- Ticket file prefetch (offline-ready without opening first) ----------------
+  // Same problem/shape as prefetchMapTiles() above, for assets/tickets/:
+  // the service worker's fetch handler only opportunistically caches a
+  // ticket once it's actually been opened (see the "assets/tickets/"
+  // note near the top of CLAUDE.md), so a file never viewed with a
+  // connection is simply missing in airplane mode. ~9MB total across all
+  // current tickets -- small enough to fetch in full on first load rather
+  // than needing the zoom-level-style range logic prefetchMapTiles() has.
+  const TICKET_PREFETCH_VERSION = "v1"; // bump to force a re-run (e.g. after adding/removing ticket files)
+  const TICKET_PREFETCH_KEY = "rougeux_tickets_prefetched";
+
+  function prefetchTicketFiles() {
+    if (navigator.onLine === false) return;
+    try {
+      if (localStorage.getItem(TICKET_PREFETCH_KEY) === TICKET_PREFETCH_VERSION) return;
+    } catch (e) {}
+
+    const urls = TICKET_FILES.map(ticketFileUrl);
+    if (!urls.length) return;
+
+    let nextIndex = 0;
+    let remaining = urls.length;
+    // Lower than prefetchMapTiles()'s 6 -- these are individual PDFs/JPGs
+    // up to ~2MB each (map tiles are a few KB), so fewer of them in
+    // flight at once is politer to the connection.
+    const CONCURRENCY = 3;
+
+    function loadNext() {
+      if (nextIndex >= urls.length) return;
+      const url = urls[nextIndex++];
+      // Same rationale as prefetchMapTiles()'s settledOnce/setTimeout:
+      // fetch() has no built-in timeout, and without one a single hung
+      // request would leave `remaining` stuck above 0 forever, silently
+      // re-attempting the entire prefetch on every future load.
+      let settledOnce = false;
+      const timeoutId = setTimeout(settle, 30000);
+      function settle() {
+        if (settledOnce) return;
+        settledOnce = true;
+        clearTimeout(timeoutId);
+        remaining--;
+        if (remaining <= 0) {
+          try { localStorage.setItem(TICKET_PREFETCH_KEY, TICKET_PREFETCH_VERSION); } catch (e) {}
+        } else {
+          loadNext();
+        }
+      }
+      // The fetch() call itself is what the service worker's fetch
+      // handler intercepts and caches (same mechanism as opening a
+      // ticket normally) -- this code doesn't need to read the response
+      // body at all, just wait for the request to settle.
+      fetch(url).then(settle, settle);
+    }
+    for (let c = 0; c < Math.min(CONCURRENCY, urls.length); c++) loadNext();
+  }
+
   render();
 
   if ("serviceWorker" in navigator) {
@@ -3378,10 +3434,11 @@
 
       // Wait until the service worker actually controls this page --
       // register() alone doesn't guarantee that yet, especially on a
-      // first-ever visit -- so these tile fetches are actually
-      // intercepted and cached by its fetch handler, not just loaded
-      // straight from the network and discarded.
+      // first-ever visit -- so these fetches are actually intercepted
+      // and cached by its fetch handler, not just loaded straight from
+      // the network and discarded.
       navigator.serviceWorker.ready.then(prefetchMapTiles).catch(() => {});
+      navigator.serviceWorker.ready.then(prefetchTicketFiles).catch(() => {});
     });
   }
 })();

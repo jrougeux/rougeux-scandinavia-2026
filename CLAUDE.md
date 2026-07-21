@@ -113,10 +113,19 @@ still dependency-free vanilla JS.
   time: `DD-MM-YYYY[ H(H)-MM] Description.ext` (the time part is optional;
   hour may be 1 or 2 digits, e.g. `8-34` or `14-23`) — see
   `parseTicketFilename()`. Ticket PDFs are *not* in `sw.js`'s precached
-  `ASSETS` list (that would bloat the initial install by several MB); they
-  rely on the service worker's fetch handler opportunistically caching
-  whatever's actually been fetched, so a ticket is only available offline
-  after it's been viewed at least once with a connection.
+  `ASSETS` list (that would bloat the initial install by several MB and
+  block the service worker's install step on every one of them
+  succeeding). Instead, `prefetchTicketFiles()` in `app.js` (same
+  shape/lifecycle as `prefetchMapTiles()` — see below — run from the same
+  `navigator.serviceWorker.ready` bootstrap) fetches every file in
+  `TICKET_FILES` in the background on first load, so tickets are
+  available offline without the user needing to have opened each one
+  first. ~9MB total across all current tickets, small enough to fetch in
+  full rather than needing `prefetchMapTiles()`'s zoom-range-style
+  scoping. `fetch()` here is what the service worker's fetch handler
+  actually intercepts and caches — same mechanism as opening a ticket
+  normally opportunistically caches it, just triggered proactively
+  instead of waiting for the user to open the file.
 
 ## Data shape
 
