@@ -1,4 +1,4 @@
-const CACHE_NAME = "rougeux-trip-v67";
+const CACHE_NAME = "rougeux-trip-v68";
 // Holds everything fetched at runtime and not part of the precached shell
 // below: map tiles (per-day canvas renderer and the trip-wide Leaflet
 // map, including the proactive prefetch in app.js) and ticket PDFs/JPGs.
@@ -63,6 +63,61 @@ self.addEventListener("activate", (event) => {
   );
 });
 
+// iOS Safari's native PDF viewer (what backs <embed type="application/pdf">
+// in the ticket file viewer -- see app.js's renderTicketFileView()) loads a
+// PDF progressively via byte-range GETs (a `Range: bytes=...` request
+// header) rather than one plain full GET, unlike the plain <img> fetch a
+// JPG ticket uses -- this is why ticket JPGs work offline while PDFs
+// didn't, even though both are cached by the exact same mechanism below.
+// A cached *full* (200) response can't satisfy a Range request as-is: the
+// browser expects a 206 Partial Content reply with Content-Range/
+// Content-Length headers describing the slice, and Cache Storage's own
+// match() does not reliably manufacture that from a stored 200 across
+// browsers -- so without this, every Range request against an
+// already-cached ticket PDF got back a full 200 body when a 206 was
+// expected, which WebKit's PDF viewer treats as a failed/unusable load.
+// This slices the cached blob manually and returns a real 206.
+function buildRangeResponse(cachedResponse, rangeHeader) {
+  return cachedResponse.blob().then((blob) => {
+    const total = blob.size;
+    const m = /^bytes=(\d*)-(\d*)$/.exec(rangeHeader || "");
+    let start = 0;
+    let end = total - 1;
+    if (m) {
+      const hasStart = m[1] !== "";
+      const hasEnd = m[2] !== "";
+      if (hasStart && hasEnd) {
+        start = parseInt(m[1], 10);
+        end = parseInt(m[2], 10);
+      } else if (hasStart && !hasEnd) {
+        start = parseInt(m[1], 10);
+        end = total - 1;
+      } else if (!hasStart && hasEnd) {
+        // Suffix form ("bytes=-500" -- last 500 bytes)
+        start = Math.max(0, total - parseInt(m[2], 10));
+        end = total - 1;
+      }
+    }
+    end = Math.min(end, total - 1);
+    if (!(start >= 0) || start > end || start >= total) {
+      return new Response(null, {
+        status: 416,
+        statusText: "Range Not Satisfiable",
+        headers: new Headers({ "Content-Range": `bytes */${total}` })
+      });
+    }
+    const headers = new Headers(cachedResponse.headers);
+    headers.set("Content-Range", `bytes ${start}-${end}/${total}`);
+    headers.set("Content-Length", String(end - start + 1));
+    headers.set("Accept-Ranges", "bytes");
+    return new Response(blob.slice(start, end + 1), {
+      status: 206,
+      statusText: "Partial Content",
+      headers
+    });
+  });
+}
+
 self.addEventListener("fetch", (event) => {
   // A request explicitly marked "reload" -- app.js's bulk "Download"
   // buttons/prefetch paths pass { cache: "reload" } specifically for
@@ -75,9 +130,16 @@ self.addEventListener("fetch", (event) => {
   // from the page has no other way to bypass this handler's own
   // cache-first Cache Storage check.
   const forceFresh = event.request.cache === "reload";
+  const rangeHeader = event.request.headers.get("range");
   event.respondWith(
     (forceFresh ? Promise.resolve(null) : caches.match(event.request)).then((cached) => {
-      if (cached) return cached;
+      if (cached) {
+        // See buildRangeResponse() above -- a Range request against an
+        // already-cached full response needs a manually-sliced 206, not
+        // the cached 200 as-is.
+        if (rangeHeader && cached.status === 200) return buildRangeResponse(cached, rangeHeader);
+        return cached;
+      }
       return fetch(event.request).then((response) => {
         // Cross-origin requests without CORS (e.g. the OpenStreetMap tile
         // <img>/Image() fetches both map renderers use) always come back
@@ -89,7 +151,17 @@ self.addEventListener("fetch", (event) => {
         // Opaque responses are cached on faith (a failed/blocked request
         // also looks opaque, so an errored tile could get cached too) --
         // an acceptable trade-off for map tiles specifically.
-        const cacheable = response && event.request.method === "GET" &&
+        //
+        // A response to a Range request (real status 206, or fetched
+        // while online before ever being fully downloaded) is deliberately
+        // never cached here -- caching it under this URL's key would
+        // permanently poison that key with a partial body, since
+        // everything above (and buildRangeResponse()) assumes a cached
+        // entry is the complete file. app.js's bulk downloader/prefetch
+        // paths always request the full resource with no Range header,
+        // so the cache is normally already fully primed before a viewer's
+        // own Range request ever reaches the network.
+        const cacheable = response && event.request.method === "GET" && !rangeHeader &&
           (response.status === 200 || response.type === "opaque");
         if (cacheable) {
           const copy = response.clone();

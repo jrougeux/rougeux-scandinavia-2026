@@ -233,6 +233,38 @@ still dependency-free vanilla JS.
   `res.ok` is meaningful) apart from cross-origin opaque tile requests
   (where it isn't) — `downloadUrls()` computes `crossOrigin` as its own
   variable up front and uses *that* instead.
+- Ticket **JPGs** worked offline after the fixes above, but ticket **PDFs**
+  still didn't, even once fully cached — the actual root cause was in how
+  the two are *viewed*, not downloaded. `renderTicketFileView()` (see
+  below) shows JPGs via a plain `<img>` (one full GET) but PDFs via
+  `<embed type="application/pdf">`, which iOS Safari's native PDF viewer
+  loads progressively via byte-range GETs (`Range: bytes=...` request
+  headers) rather than one full GET. A cached *full* (200) response can't
+  satisfy a Range request as-is — the browser expects a real 206 Partial
+  Content reply with matching `Content-Range`/`Content-Length` headers,
+  and Cache Storage's own `match()` does not reliably manufacture that
+  from a stored 200 across browsers — so every Range request against an
+  already-cached ticket PDF was getting back a full 200 body when a 206
+  was expected, which WebKit's PDF viewer treats as a failed/unusable
+  load. This is why every PDF failed regardless of size while both JPGs
+  worked, and why the download itself could genuinely "complete" (the
+  full file really was cached) while the file still wouldn't open
+  offline. `sw.js`'s fetch handler now checks for a `Range` header on a
+  cache hit and, if present, hands the cached response to
+  `buildRangeResponse()`, which reads the cached blob, parses the
+  `bytes=start-end` / `bytes=start-` / `bytes=-suffixLength` header forms,
+  slices the blob to the requested range, and returns a real `Response`
+  with `status: 206` and `Content-Range`/`Content-Length`/`Accept-Ranges`
+  headers describing the slice (or `416 Range Not Satisfiable` if the
+  requested range is out of bounds). A response to a Range request is
+  deliberately never written to the cache itself (`cacheable` also checks
+  `!rangeHeader`) — caching a partial body under the same URL key would
+  permanently poison that key for every future request, same-Range or
+  not, since everything here assumes a cached entry is the complete file;
+  `downloadUrls()`'s bulk downloads and the silent prefetches always
+  request the full resource with no Range header, so the cache is
+  normally already fully primed by the time a viewer's own Range request
+  ever reaches this handler.
 
 ## Data shape
 
