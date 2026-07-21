@@ -239,12 +239,19 @@ Defined as CSS custom properties in `styles.css` (`:root`):
   on launch.
 - The map legend (`.trip-map-legend`) is `position: fixed` to the bottom
   of the screen, just above the bottom nav, rather than a normal-flow
-  strip below the map — always visible without scrolling. It's a 3-column
-  CSS grid (not `flex-wrap`), which guarantees exactly 2 rows for its 6
-  items regardless of viewport width; flex-wrap could spill to a 3rd line
-  on a narrow phone. `.trip-map-view` carries extra bottom padding so
-  normal-flow content (the hint text) isn't hidden underneath the
-  now-fixed legend.
+  strip below the map — always visible without scrolling, overlaying the
+  map/page rather than pushing content up (deliberately no compensating
+  bottom padding on `.trip-map-view` — that was tried and produced a
+  visible gap of bare page background between the map content and the
+  fixed legend, since the map/hint rarely reach the very bottom of the
+  viewport on their own). It's a 3-column CSS grid sized to content
+  (`grid-template-columns: repeat(3, auto)`, not `1fr` or `flex-wrap`):
+  `1fr`/flex-wrap either stretch each column full-width (left-aligning a
+  short label like "POI" with a big gap after it) or can spill to a 3rd
+  line on a narrow phone with longer label text; `auto` columns plus
+  `justify-content` + `justify-items: center` guarantee exactly 2 rows
+  *and* keep the block centered with even spacing between every item,
+  regardless of viewport width.
 - Walking legs can also introduce a pin, not just activity/dining/transport
   ones -- e.g. day 14 leg 151 ("Bryggen") is a plain walking destination
   with no activity/dining leg of its own, so without this it wouldn't

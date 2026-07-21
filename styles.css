@@ -774,11 +774,7 @@ input:focus-visible {
 .day-jump button:disabled { opacity: 0.3; }
 
 /* ---------- Trip map view ---------- */
-/* Bottom padding clears the legend, which is position:fixed (see
-   .trip-map-legend below) and would otherwise sit on top of the hint
-   text / bottom of the canvas instead of visually "making room" for
-   itself the way a normal-flow element would. */
-.trip-map-view { padding: 0 0 92px; }
+.trip-map-view { padding: 0 0 16px; }
 .trip-map-canvas {
   width: 100%;
   height: 68vh;
@@ -794,9 +790,12 @@ input:focus-visible {
 /* Fixed to the bottom of the screen (just above the bottom nav) so it's
    always visible without scrolling, rather than a normal-flow strip
    below the map that could end up off-screen on a tall map. A 3-column
-   grid (not flex-wrap) guarantees exactly 2 rows for these 6 items
-   regardless of viewport width -- flex-wrap could spill to 3 lines on a
-   narrow phone with longer label text. */
+   grid sized to content (not 1fr, which stretches each column edge-to-
+   edge and left-aligns shorter labels within it) with justify-content/
+   justify-items: center guarantees exactly 2 rows for these 6 items
+   regardless of viewport width, *and* keeps the block centered with even
+   spacing between items -- flex-wrap could both spill to 3 lines on a
+   narrow phone and leave uneven gaps next to short labels like "POI". */
 .trip-map-legend {
   position: fixed;
   left: 0;
@@ -804,11 +803,13 @@ input:focus-visible {
   bottom: calc(56px + env(safe-area-inset-bottom, 0px));
   z-index: 15;
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 3px 10px;
+  grid-template-columns: repeat(3, auto);
+  justify-content: center;
+  justify-items: center;
+  gap: 4px 22px;
   max-width: 640px;
   margin: 0 auto;
-  padding: 6px 14px;
+  padding: 7px 16px;
   background: var(--surface);
   border-top: 1px solid var(--line);
   font-size: 11px;
@@ -818,9 +819,7 @@ input:focus-visible {
   display: flex;
   align-items: center;
   gap: 4px;
-  overflow: hidden;
   white-space: nowrap;
-  text-overflow: ellipsis;
 }
 .tml-dot {
   flex: 0 0 auto;
@@ -949,31 +948,43 @@ input:focus-visible {
 .trip-map-locate-btn.active { color: #1a73e8; }
 .trip-map-locate-btn:active { background: var(--surface-2); }
 
-/* Live "blue dot" -- a Google-Maps-style position marker with a heading
-   cone. The accuracy circle itself is a Leaflet L.circle (real-world
-   meter radius, styled via its own JS options), not CSS. */
+/* Live "blue dot" -- an Apple-Maps-style position puck with a heading
+   sweep. The accuracy circle itself is a Leaflet L.circle (real-world
+   meter radius, styled via its own JS options), not CSS. Both children
+   are absolutely positioned at the icon div's exact center (50%/50%,
+   offset back by half their own size via a negative margin) rather than
+   sized to iconSize -- iconAnchor already keeps that center pinned to
+   the true lat/lng regardless of how much either child's own box
+   overflows the (much smaller) divIcon container, so the sweep can be
+   drawn far larger than the dot without needing to enlarge iconSize. */
 .user-loc-icon { position: relative; }
 .user-loc-dot {
   position: absolute;
   left: 50%;
   top: 50%;
-  width: 14px;
-  height: 14px;
-  margin: -7px 0 0 -7px;
+  /* 14px -> 17.5px, a 25% size bump */
+  width: 17.5px;
+  height: 17.5px;
+  margin: -8.75px 0 0 -8.75px;
   border-radius: 50%;
   background: #1a73e8;
   border: 2px solid #fff;
   box-shadow: 0 0 0 1px rgba(0,0,0,0.25), 0 1px 4px rgba(0,0,0,0.35);
+  z-index: 1;
 }
+/* Apple Maps' heading indicator is a soft radial sweep fanning out from
+   the puck (strongest near the dot, fading to nothing at the rim), not a
+   flat-colored wedge -- a clip-path cuts the fan/cone shape out of a
+   square, and a radial-gradient centered on the dot supplies the fade. */
 .user-loc-cone {
   position: absolute;
   left: 50%;
   top: 50%;
-  width: 0;
-  height: 0;
-  border-left: 9px solid transparent;
-  border-right: 9px solid transparent;
-  border-bottom: 22px solid rgba(26,115,232,0.35);
+  width: 56px;
+  height: 56px;
+  margin: -56px 0 0 -28px;
+  clip-path: polygon(50% 100%, 10% 0%, 90% 0%);
+  background: radial-gradient(circle at 50% 100%, rgba(26,115,232,0.55) 0%, rgba(26,115,232,0.22) 50%, rgba(26,115,232,0) 82%);
   transform-origin: 50% 100%;
   pointer-events: none;
 }
