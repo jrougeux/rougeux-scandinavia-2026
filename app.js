@@ -486,16 +486,23 @@
         e.preventDefault();
         pinchScale = touchDist(e.touches) / pinchStartDist;
         let clamped = Math.min(Math.max(pinchScale, 0.4), 3);
-        // Already at the zoom limit in this direction -- endPinch() below
-        // will clamp the resulting zoom level right back to where it
-        // started, so scaling the canvas up/down here first would just
-        // be a "false" preview of a zoom change that's not actually
-        // going to happen, then snap back once the gesture ends.
-        // Freezing the visual scale at 1 (no-op) instead makes the map
-        // correctly not respond to further zoom-in/out gestures once
-        // already at MAP_MAX_ZOOM/MAP_MIN_ZOOM.
-        if (pinchStartZoom >= MAP_MAX_ZOOM) clamped = Math.min(clamped, 1);
-        if (pinchStartZoom <= MAP_MIN_ZOOM) clamped = Math.max(clamped, 1);
+        // Clamp the *visual* preview to whatever range still maps to a
+        // real, in-range zoom level -- 2^(MAP_MAX_ZOOM - pinchStartZoom)
+        // is exactly the scale at which endPinch() below would land on
+        // MAP_MAX_ZOOM itself (scale = 2^deltaZoom, so deltaZoom =
+        // MAP_MAX_ZOOM - pinchStartZoom exactly reaches the limit).
+        // Checking only pinchStartZoom (an earlier, insufficient version
+        // of this fix) caught a gesture that *starts* already at the
+        // limit, but not one that pinches *past* it in a single
+        // continuous motion (e.g. zoom 15 through to past 17) -- that
+        // still showed the canvas visually scaling beyond what's
+        // actually achievable, then snapping back once the gesture
+        // ended. This freezes the preview exactly at the boundary
+        // instead, in both directions, regardless of where the gesture
+        // started.
+        const maxScale = Math.pow(2, MAP_MAX_ZOOM - pinchStartZoom);
+        const minScale = Math.pow(2, MAP_MIN_ZOOM - pinchStartZoom);
+        clamped = Math.min(Math.max(clamped, minScale), maxScale);
         canvas.style.transform = `scale(${clamped})`;
       }
     }, { passive: false });
@@ -1689,6 +1696,32 @@
   let tripMapPersisted = null;
   let tripMapOpenPopupKey = null;
 
+  // Leaflet measures its container's size once at init and caches it --
+  // it has no way to know the container was resized later unless told
+  // explicitly via invalidateSize(). On iOS Safari specifically, the
+  // dynamic toolbar (address bar) showing/hiding as the user scrolls or
+  // interacts changes the *real* visible viewport height without firing
+  // a plain "resize" event reliably, since .trip-map-canvas's height is
+  // in vh/dvh units tied to that viewport. Without this, the map's
+  // internal panes/controls (including the zoom control) stay positioned
+  // for whatever size the container was when the map was created,
+  // drifting out of alignment with where the container is actually
+  // rendered now -- e.g. the zoom control ending up partly behind the
+  // header. visualViewport's own resize event is the more precise,
+  // iOS-specific signal for exactly this; plain window resize is kept as
+  // a fallback for browsers without the Visual Viewport API. Registered
+  // once at module scope (not per-mount) since tripMapInstance changes
+  // across mount/unmount but this listener shouldn't be re-added every
+  // time -- it just checks whichever instance is currently live.
+  function invalidateTripMapSize() {
+    if (tripMapInstance) tripMapInstance.invalidateSize();
+  }
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener("resize", invalidateTripMapSize);
+  } else {
+    window.addEventListener("resize", invalidateTripMapSize);
+  }
+
   function teardownTripMap() {
     if (tripMapInstance) {
       try {
@@ -1958,6 +1991,7 @@
   // tripMapPersisted mechanism that restores state when navigating back
   // to the Map tab, since "go to this exact pin" is the same operation.
   function goToMapPin(key, lat, lon) {
+    captureDayScrollIfLeaving();
     window.scrollTo(0, 0);
     tripMapPersisted = { center: [lat, lon], zoom: 15, openPopupKey: key };
     state.view = "map";
@@ -3096,7 +3130,10 @@
         // existed at the old scroll offset -- an out-of-bounds position
         // the browser would clamp, sometimes visibly (a flash) before
         // our own scrollTo(0,0) corrected it a moment later.
-        if (it.key !== "day") window.scrollTo(0, 0);
+        if (it.key !== "day") {
+          captureDayScrollIfLeaving();
+          window.scrollTo(0, 0);
+        }
         state.view = it.key;
         render();
         if (it.key === "day" && !wasDay) window.scrollTo(0, dayViewScrollY);
@@ -3110,17 +3147,23 @@
 
   // Scroll position within the Day view, captured whenever navigating away
   // from it (to Map or elsewhere) so returning to the *same* day restores
-  // where you were instead of snapping back to the top. Tracked here
-  // rather than in each individual nav click handler since there are
-  // multiple ways to leave Day view (bottom nav, a leg's "Map view"
-  // button) and this way none of them can forget to capture it.
+  // where you were instead of snapping back to the top. Every call site
+  // that can leave Day view (bottom nav, a leg's "Map view" button) calls
+  // this explicitly, immediately before it -- this used to be handled
+  // generically inside render() itself instead (comparing state.view
+  // against the previously-rendered view), but that broke once those
+  // call sites started scrolling to (0,0) *before* calling render() (see
+  // the comment in the bottom-nav click handler): by the time render()
+  // ran, window.scrollY already read 0 from that scroll, so the capture
+  // was recording 0 instead of the real prior position. Capturing here,
+  // strictly before any scroll manipulation, is what makes it correct
+  // again.
   let dayViewScrollY = 0;
-  let lastRenderedView = null;
+  function captureDayScrollIfLeaving() {
+    if (state.view === "day") dayViewScrollY = window.scrollY;
+  }
 
   function render() {
-    if (lastRenderedView === "day" && state.view !== "day") {
-      dayViewScrollY = window.scrollY;
-    }
     saveLastView(state.view);
     saveTicketsDayIndex(state.ticketsDayIndex);
     saveWikiEntryId(state.wikiEntryId);
@@ -3138,7 +3181,6 @@
     if (state.view === "tickets" && state.ticketFile) {
       document.body.style.overflow = "hidden";
       root.appendChild(renderTicketFileView(state.ticketFile));
-      lastRenderedView = state.view;
       return;
     }
     document.body.style.overflow = "";
@@ -3153,7 +3195,6 @@
     else view = renderChecklistView();
     root.appendChild(view);
     root.appendChild(renderBottomNav());
-    lastRenderedView = state.view;
   }
 
   // ---------------- Map tile prefetch (offline-ready without browsing first) ----------------

@@ -207,6 +207,37 @@ Defined as CSS custom properties in `styles.css` (`:root`):
   content to exist first to land at the right offset; same story for
   `goToDay(dayIndex, legNum, ...)` with an actual leg/dining target, which
   needs the new DOM to exist before it can even find that element.
+- `dayViewScrollY`'s capture is now explicit, not automatic:
+  `captureDayScrollIfLeaving()` (right next to `dayViewScrollY` itself)
+  is called directly by every call site that can leave Day view (the
+  bottom nav, `goToMapPin()`), immediately *before* that call site's own
+  `window.scrollTo(0, 0)`. This used to be handled generically inside
+  `render()` instead, comparing `state.view` against a `lastRenderedView`
+  tracked across calls — but that broke the moment those call sites
+  started scrolling to `(0, 0)` *before* calling `render()` (see the
+  flash fix above): by the time `render()` ran, `window.scrollY` already
+  read `0` from that earlier scroll, so the old generic capture was
+  recording `0` instead of the real prior position, silently breaking
+  scroll restoration. Capturing explicitly, strictly before any scroll
+  manipulation at each call site, is what makes it correct again — this
+  is why the ordering at each such call site matters: capture, *then*
+  scroll to top, *then* change `state.view` and render.
+- `invalidateTripMapSize()` (registered once at module scope, listening
+  on `visualViewport`'s `resize` event where available, falling back to
+  plain `window` `resize`) calls `tripMapInstance.invalidateSize()`
+  whenever it fires. Leaflet measures its container once at init and
+  caches that size — it has no way to know the container was resized
+  later unless told explicitly. `.trip-map-canvas`'s height is in
+  vh/dvh units tied to the *visible* viewport, and iOS Safari's dynamic
+  toolbar (address bar) showing/hiding as the user scrolls or interacts
+  changes that real visible height without necessarily firing a plain
+  `resize` event — without this, the map's internal panes/controls
+  (including the zoom control) stay positioned for whatever size the
+  container was when the map was created, gradually drifting out of
+  alignment with where the container is actually rendered now (e.g. the
+  zoom control ending up partly behind the header after some
+  interaction, not on first load). `visualViewport`'s own resize event
+  is the more precise, iOS-specific signal for exactly this.
 - Nearly every clickable element gets `opacity: 0.6` on `:active` via a
   broad, low-specificity baseline rule (`button:active, a[href]:active`
   near the top of `styles.css`, right after the base `button` rule) —
@@ -229,13 +260,18 @@ Defined as CSS custom properties in `styles.css` (`:root`):
   via `renderCollapsible()`'s `onFirstOpen` hook), not on every render.
   Pinch-to-zoom on this canvas is hand-rolled (`touchmove`/`endPinch()`
   in `renderMapSection()`), and clamps the *visual* CSS `scale()` preview
-  to `1` (no-op) once already at `MAP_MIN_ZOOM`/`MAP_MAX_ZOOM` in that
-  direction — without this, pinching further at the zoom limit still
-  visually scaled the canvas up/down during the gesture (a "false zoom"
-  preview of a change that was never going to happen, since `endPinch()`
-  clamps the resulting zoom level right back to where it started), then
-  snapped back once the gesture ended. The +/- buttons were never
-  affected (they already check/disable at the limits directly).
+  to `2^(MAP_MAX_ZOOM - pinchStartZoom)` / `2^(MAP_MIN_ZOOM -
+  pinchStartZoom)` — the exact scale at which `endPinch()`'s `scale =
+  2^deltaZoom` math would land precisely on the limit — rather than just
+  checking whether the gesture *starts* at the limit (an earlier,
+  insufficient version of this fix: that caught a fresh gesture starting
+  already at max/min zoom, but not one that pinches *past* the limit in
+  a single continuous motion, e.g. zoom 15 through to past 17, which
+  still showed the canvas visually scaling beyond what's achievable
+  before snapping back once the gesture ended). This freezes the preview
+  exactly at the boundary in both directions regardless of where the
+  gesture started. The +/- buttons were never affected (they already
+  check/disable at the limits directly).
 - On first load (once the service worker actually controls the page --
   see `navigator.serviceWorker.ready` in the bootstrap at the bottom of
   `app.js`), `prefetchMapTiles()` proactively downloads map tiles for the
