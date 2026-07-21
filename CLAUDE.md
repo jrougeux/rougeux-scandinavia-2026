@@ -265,6 +265,34 @@ still dependency-free vanilla JS.
   request the full resource with no Range header, so the cache is
   normally already fully primed by the time a viewer's own Range request
   ever reaches this handler.
+- Even with the 206 fix above, a plain `fetch()`-based download (the
+  Checklist "Download" button, and the silent `prefetchTicketFiles()`)
+  has not reliably produced a usable offline copy of a ticket **PDF** on
+  iOS Safari in practice — while manually opening a PDF once while online
+  (going through the real `<embed type="application/pdf">` viewer) does
+  reliably make it work offline afterward, every time. Rather than
+  continue guessing at the exact iOS-specific mechanism behind that gap,
+  `downloadTicketFiles()` (used by both of those call sites instead of
+  `downloadUrls()` directly) sidesteps it by driving the *same real path*
+  the manual workaround uses, programmatically: `warmPdfFiles()` walks
+  every ticket PDF one at a time (not concurrently — several simultaneous
+  native PDF plugin instances is heavier and less predictable on mobile
+  than `fetch()` concurrency) via `warmPdfViaEmbed()`, which creates a
+  real `<embed type="application/pdf">`, positions it fully outside the
+  viewport (`position: fixed; left: -9999px` — not `display: none`, which
+  some browsers never actually load a resource for), appends it to the
+  document, sets its `src`, and waits for `load`/`error`/a 20s fallback
+  timeout before removing it and moving to the next. Ticket JPGs are
+  unaffected by any of this — they keep going through the existing
+  `downloadUrls()` `fetch()` path, which already reliably caches them.
+  Success is judged afterward by real Cache Storage contents
+  (`countCachedUrls()`), not the `<embed>`'s own `load` event firing —
+  same "trust actual cache state, not a completion signal" principle as
+  the rest of this feature, since a `load` event is not itself proof the
+  full file ended up cached. `TICKET_PREFETCH_VERSION` was bumped to
+  `"v2"` so everyone's existing "done" flag (set by the old,
+  PDF-unreliable `fetch()`-only prefetch) doesn't suppress a real retry
+  under this new mechanism.
 
 ## Data shape
 
