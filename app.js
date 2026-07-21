@@ -2388,6 +2388,10 @@
   // there) since buildTripMapPoints() needs them earlier than this section
   // runs.
 
+  function escapeHtml(text) {
+    return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+
   // Minimal markdown -> HTML: content/summary/fun_fact carry literal
   // **bold**/*italic* markdown syntax in some entries (per the data's own
   // documentation) rather than real formatting. HTML-escape first (this is
@@ -2395,7 +2399,7 @@
   // data -- a stray "<" or "&" in an entry needs to render literally, not
   // break the markup), then convert just bold/italic and paragraph breaks.
   function mdLiteToHtml(text) {
-    const escaped = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    const escaped = escapeHtml(text);
     const emphasized = escaped
       .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
       .replace(/\*([^*]+)\*/g, "<em>$1</em>");
@@ -2403,6 +2407,103 @@
       .split(/\n\s*\n/)
       .map((para) => `<p>${para.trim().replace(/\n/g, "<br>")}</p>`)
       .join("");
+  }
+
+  // Cross-references: any other POI's name mentioned verbatim in an
+  // entry's long-form `content` essay becomes an in-place link to that
+  // entry, with a "See also" list at the bottom summarizing every entry
+  // referenced that way. One combined regex covers every POI name, tried
+  // longest-first at each position (so e.g. "Bergen Railway
+  // (Bergensbanen)" wins over the plainer "Bergen" where both would
+  // otherwise match at the same spot) -- built once at module load, not
+  // per render, since POI_LIST never changes at runtime. Case-sensitive
+  // on purpose: entry names are proper nouns that always appear
+  // capitalized in this data, and case-insensitive matching would risk
+  // false positives on any name that doubles as an ordinary word.
+  const POI_REF_NAMES_SORTED = POI_LIST.slice().sort((a, b) => b.name.length - a.name.length);
+  const POI_REF_BY_NAME = new Map(POI_LIST.map((p) => [p.name, p]));
+  const POI_REF_REGEX = POI_REF_NAMES_SORTED.length
+    ? new RegExp(
+        "(?<![\\p{L}\\p{N}])(?:" +
+          POI_REF_NAMES_SORTED.map((p) => p.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|") +
+          ")(?![\\p{L}\\p{N}])",
+        "gu"
+      )
+    : null;
+
+  // Replaces the *first* mention of each other-POI's name in `text` with
+  // a "@@POIREF:<id>@@" marker -- plain letters/digits/@/: so it passes
+  // through mdLiteToHtml's HTML-escaping/markdown pipeline unscathed --
+  // and returns the marked-up text plus the ordered, de-duplicated list
+  // of POIs referenced, for the caller to substitute real <a> tags in
+  // afterward and build a "See also" list. Only the first mention per
+  // target is linked (later repeats of the same name are left as plain
+  // text) so a page that says "Bergen" ten times doesn't turn ten of them
+  // blue; every *distinct* entry referenced still gets linked once and
+  // still shows up in "See also". Skips the entry's own name so it never
+  // links to itself.
+  function markPoiReferences(text, currentId) {
+    if (!POI_REF_REGEX) return { text, refs: [] };
+    const refs = [];
+    const linked = new Set();
+    const marked = text.replace(POI_REF_REGEX, (match) => {
+      const poi = POI_REF_BY_NAME.get(match);
+      if (!poi || poi.id === currentId || linked.has(poi.id)) return match;
+      linked.add(poi.id);
+      refs.push(poi);
+      return `@@POIREF:${poi.id}@@`;
+    });
+    return { text: marked, refs };
+  }
+
+  // Runs an entry's content through the reference-marking + markdown-lite
+  // pipeline, then resolves the markers into real links -- done in this
+  // order (mark plain-text references -> escape/markdown -> resolve
+  // markers) rather than linkifying the final HTML directly, so a POI
+  // name is never accidentally matched inside an HTML tag, and the
+  // eventual <a> never gets torn in half by a bold/italic/paragraph
+  // boundary landing mid-name.
+  function linkifyPoiContent(poi) {
+    const { text: marked, refs } = markPoiReferences(poi.content, poi.id);
+    const html = mdLiteToHtml(marked).replace(/@@POIREF:([a-z0-9_]+)@@/g, (whole, id) => {
+      const target = POI_BY_ID[id];
+      if (!target) return "";
+      return `<a href="#" class="wiki-inline-ref" data-poi-id="${id}">${escapeHtml(target.name)}</a>`;
+    });
+    return { html, refs };
+  }
+
+  // "See also" is meant to be one-way-reference-proof: if entry A's
+  // content mentions entry B but B's content never happens to mention A
+  // back, B's own "See also" should still list A -- otherwise a
+  // one-directional in-prose mention (common; e.g. plenty of entries
+  // mention "Bergen" while Bergen's own essay obviously can't organically
+  // mention all of them back) would make the backlink invisible from the
+  // referenced entry's page. So this is precomputed once for the *whole*
+  // POI set at module load: POI_OUTGOING_REFS is exactly what
+  // markPoiReferences() finds per entry (same as the in-body links), and
+  // POI_INCOMING_REFS is that graph inverted -- every entry that
+  // references a given entry. seeAlsoRefsFor() unions both, deduplicated,
+  // outgoing first.
+  const POI_OUTGOING_REFS = new Map(
+    POI_LIST.map((p) => [p.id, markPoiReferences(p.content, p.id).refs])
+  );
+  const POI_INCOMING_REFS = new Map(POI_LIST.map((p) => [p.id, []]));
+  POI_OUTGOING_REFS.forEach((refs, fromId) => {
+    refs.forEach((toPoi) => {
+      POI_INCOMING_REFS.get(toPoi.id).push(POI_BY_ID[fromId]);
+    });
+  });
+
+  function seeAlsoRefsFor(poi) {
+    const seen = new Set([poi.id]);
+    const combined = [];
+    [...POI_OUTGOING_REFS.get(poi.id), ...POI_INCOMING_REFS.get(poi.id)].forEach((p) => {
+      if (seen.has(p.id)) return;
+      seen.add(p.id);
+      combined.push(p);
+    });
+    return combined;
   }
 
   // Indexes name/category/summary/fun_fact *and* the full long-form
@@ -2522,9 +2623,29 @@
       container.appendChild(mapBtn);
     }
 
+    function openReferencedEntry(id) {
+      const target = POI_BY_ID[id];
+      if (!target) return;
+      state.wikiEntryId = target.id;
+      render();
+      window.scrollTo(0, 0);
+    }
+
+    const { html: bodyHtml } = linkifyPoiContent(poi);
+    const seeAlsoRefs = seeAlsoRefsFor(poi);
+
     const body = document.createElement("div");
     body.className = "wiki-entry-body";
-    body.innerHTML = mdLiteToHtml(poi.content);
+    body.innerHTML = bodyHtml;
+    // Event delegation, not a per-link listener -- the links themselves
+    // are built as an HTML string above (innerHTML), not individual DOM
+    // nodes we already have references to.
+    body.addEventListener("click", (e) => {
+      const link = e.target.closest(".wiki-inline-ref");
+      if (!link) return;
+      e.preventDefault();
+      openReferencedEntry(link.dataset.poiId);
+    });
     container.appendChild(body);
 
     if (poi.fun_fact) {
@@ -2532,6 +2653,21 @@
       fact.className = "wiki-fun-fact";
       fact.innerHTML = `<span class="wiki-fun-fact-label">Fun fact</span>${mdLiteToHtml(poi.fun_fact)}`;
       container.appendChild(fact);
+    }
+
+    if (seeAlsoRefs.length) {
+      const seeAlso = document.createElement("div");
+      seeAlso.className = "wiki-see-also";
+      seeAlso.innerHTML = `<span class="wiki-see-also-label">See also</span>`;
+      seeAlsoRefs.forEach((ref) => {
+        const link = document.createElement("button");
+        link.type = "button";
+        link.className = "wiki-see-also-link";
+        link.innerHTML = `<span class="tml-dot" style="background:${categoryMapColor("poi")}"></span>${ref.name}`;
+        link.addEventListener("click", () => openReferencedEntry(ref.id));
+        seeAlso.appendChild(link);
+      });
+      container.appendChild(seeAlso);
     }
 
     if (poi.sources && poi.sources.length) {

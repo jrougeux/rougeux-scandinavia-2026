@@ -386,6 +386,42 @@ Defined as CSS custom properties in `styles.css` (`:root`):
   `TRIP_MAP_DETAIL_MIN_ZOOM`), and their popup shows the entry's name,
   category, and a "Learn more →" button that jumps into that Wiki entry's
   detail view (setting `state.view = "wiki"` and `state.wikiEntryId`).
+- Wiki entries cross-reference each other: any other entry's name
+  mentioned verbatim in an entry's long-form `content` essay becomes an
+  in-place link to that entry (`linkifyPoiContent()`/`markPoiReferences()`
+  in `app.js`), plus a "See also" list at the bottom of the page
+  summarizing every entry referenced that way. One combined regex over
+  all 51 names, longest-first so a compound name (e.g. "Bergen Railway
+  (Bergensbanen)") wins over a shorter one that's also a substring match
+  at the same spot (e.g. "Bergen"); case-sensitive since these are proper
+  nouns. Every entry is eligible as a link target, including the broad
+  country/city/region ones (Norway, Sweden, Bergen, Oslo, Stockholm,
+  Voss, Karlstad, Mora, Dalarna, Värmland) — a deliberate choice (asked
+  explicitly rather than assumed) even though it means e.g. most
+  Bergen-area entries link back to the "Bergen" overview page. Only the
+  *first* mention of each distinct other-entry name is turned into a link
+  (later repeats of the same name stay plain text) so a page that says
+  "Bergen" ten times doesn't turn ten of them blue, but "See also" still
+  lists every distinct entry referenced. "See also" is *not* just the
+  in-body links, though -- references are one-way in the source prose
+  (an entry mentioning "Bergen" doesn't mean Bergen's own essay happens
+  to mention it back), so `seeAlsoRefsFor()` unions an entry's outgoing
+  references with its *incoming* ones (every other entry whose content
+  references it — `POI_OUTGOING_REFS`/`POI_INCOMING_REFS`, the latter
+  built by inverting the former, both precomputed once for the whole POI
+  set at module load). This is why e.g. the "Bergen" entry's own "See
+  also" lists Bergenhus Fortress, Fisketorget, Fløibanen, etc. even
+  though Bergen's own essay never happens to name-check most of them —
+  they reference *it*, and that's enough to surface the connection from
+  either direction. Matching happens on the raw
+  `content` text via a "@@POIREF:&lt;id&gt;@@" marker substitution *before*
+  `mdLiteToHtml()`'s HTML-escaping/markdown pass, with the markers
+  resolved into real `<a>` tags *after* -- not linkifying the final HTML
+  directly -- so a POI name is never matched inside an HTML tag and never
+  torn in half by a bold/italic/paragraph boundary landing mid-name. The
+  inline links are built via `innerHTML` (not individual DOM node
+  references), so clicks are handled through one delegated listener on
+  `.wiki-entry-body` rather than per-link.
 - Point-of-interest content is intentionally **Wiki- and Map-only** — it
   never appears in the Day view (Logistics list, Dining options, story/
   reminders). This was an explicit product decision, not an oversight: the

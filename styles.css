@@ -1205,6 +1205,14 @@ input:focus-visible {
 .wiki-entry-body p { margin: 0 0 12px; }
 .wiki-entry-body p:last-child { margin-bottom: 0; }
 .wiki-entry-body strong { color: var(--text); font-weight: 700; }
+.wiki-entry-body .wiki-inline-ref {
+  color: var(--accent);
+  font-weight: 600;
+  text-decoration: underline;
+  text-decoration-color: var(--line);
+  text-underline-offset: 2px;
+}
+.wiki-entry-body .wiki-inline-ref:active { opacity: 0.6; }
 
 .wiki-fun-fact {
   margin-top: 16px;
@@ -1226,6 +1234,40 @@ input:focus-visible {
   margin-bottom: 4px;
 }
 .wiki-fun-fact p { margin: 0; }
+
+.wiki-see-also {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.wiki-see-also-label {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-faint);
+}
+.wiki-see-also-link {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 10px 12px;
+  min-height: 40px;
+  box-sizing: border-box;
+  text-align: left;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  font-size: 14.5px;
+  font-weight: 600;
+  color: var(--text);
+  touch-action: manipulation;
+}
+.wiki-see-also-link:active { background: var(--line); }
 
 .wiki-sources {
   margin-top: 14px;
