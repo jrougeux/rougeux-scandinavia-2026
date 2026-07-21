@@ -1,4 +1,4 @@
-const CACHE_NAME = "rougeux-trip-v71";
+const CACHE_NAME = "rougeux-trip-v72";
 // Holds everything fetched at runtime and not part of the precached shell
 // below: map tiles (per-day canvas renderer and the trip-wide Leaflet
 // map, including the proactive prefetch in app.js) and ticket PDFs/JPGs.
@@ -161,7 +161,24 @@ self.addEventListener("fetch", (event) => {
         // paths always request the full resource with no Range header,
         // so the cache is normally already fully primed before a viewer's
         // own Range request ever reaches the network.
-        const cacheable = response && event.request.method === "GET" && !rangeHeader &&
+        // A forceFresh (cache: "reload") request is exclusively how
+        // app.js's downloadUrls() marks its own bulk-download requests --
+        // no other code path in this app sets that. downloadUrls() now
+        // does its own cache.put() directly from the page (see its doc
+        // comment) so it can directly await the write actually
+        // completing, rather than trusting this handler's fire-and-forget
+        // event.waitUntil() to have finished by the time it reports
+        // "done". Also having this handler clone() and cache.put() the
+        // *same* response the page is independently about to read and
+        // cache.put() itself is an unnecessary redundancy -- two
+        // independent consumers racing to read/cache the same underlying
+        // body is exactly the kind of thing that behaves unpredictably
+        // across browsers, and is a plausible explanation for downloads
+        // that report success far too fast with nothing actually
+        // persisted. Excluding forceFresh requests here means there's
+        // only ever one writer for a downloader-initiated request: the
+        // page itself.
+        const cacheable = response && event.request.method === "GET" && !rangeHeader && !forceFresh &&
           (response.status === 200 || response.type === "opaque");
         if (cacheable) {
           const copy = response.clone();

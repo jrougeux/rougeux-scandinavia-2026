@@ -3536,19 +3536,26 @@
       // Cache Storage directly from here instead of trusting that the
       // in-flight request already got cached by the service worker: a
       // page-side promise chain can be waited on directly and its
-      // resolution is a definite, checkable guarantee the full body was
-      // read and the write completed, rather than an assumption about a
-      // separate execution context's extended-lifetime behavior. This
-      // still lands in the exact same Cache Storage bucket the service
-      // worker's own opportunistic caching uses (RUNTIME_CACHE_NAME, kept
-      // in sync with sw.js's constant of the same name above), so a
-      // duplicate write there from the service worker's own fetch handler
-      // for this same request is harmless -- same content, same key.
-      // cache.put() itself needs an unconsumed response body to store it,
-      // so there's no separate res.blob() call needed here anymore --
-      // cache.put()'s own resolution already doesn't happen until the
-      // full body has been read, which is exactly the completion signal
-      // this needs.
+      // resolution is a definite, checkable guarantee the write was
+      // attempted, rather than an assumption about a separate execution
+      // context's extended-lifetime behavior. This lands in the exact same
+      // Cache Storage bucket the service worker's own opportunistic
+      // caching uses (RUNTIME_CACHE_NAME, kept in sync with sw.js's
+      // constant of the same name above) -- but sw.js's fetch handler
+      // deliberately does *not* also cache.put() this same response itself
+      // (it checks for and skips forceFresh/cache:"reload" requests, which
+      // only downloadUrls() ever sends): two independent consumers both
+      // cloning and reading the same underlying response body is exactly
+      // the kind of redundancy that can behave unpredictably across
+      // browsers, and it's simpler and safer to have exactly one writer
+      // for a downloader-initiated request. cache.put() itself needs an
+      // unconsumed response body to store it, so there's no separate
+      // res.blob() call needed here anymore -- cache.put()'s own
+      // resolution already doesn't happen until the full body has been
+      // read. Success is still verified afterward with an independent
+      // caches.match() read (see below) rather than trusting cache.put()'s
+      // own resolution alone, in case that alone ever turns out not to be
+      // a strong enough guarantee either.
       fetch(url, fetchOpts).then((res) => {
         const headersOk = crossOrigin ? true : !!(res && res.ok);
         if (!headersOk) {
@@ -3557,7 +3564,12 @@
           return res.blob().then(() => settle(false), () => settle(false));
         }
         return caches.open(RUNTIME_CACHE_NAME).then((cache) => cache.put(url, res)).then(
-          () => settle(true),
+          // Re-read the entry back via a fresh caches.match() rather than
+          // trusting cache.put()'s own resolution alone -- this is a
+          // completely independent read path from the write that just
+          // happened, so it can't share whatever caused a past write to
+          // report success without anything actually being persisted.
+          () => caches.match(url).then((check) => settle(!!check), () => settle(false)),
           () => settle(false)
         );
       }, () => settle(false));
@@ -3685,12 +3697,14 @@
   // connection is simply missing in airplane mode. ~9MB total across all
   // current tickets -- small enough to fetch in full on first load rather
   // than needing the zoom-level-style range logic prefetchMapTiles() has.
-  // v3: earlier versions never reliably cached ticket PDFs for offline
+  // v4: earlier versions never reliably cached ticket PDFs for offline
   // use on iOS Safari, even when they reported success -- see
-  // downloadUrls()'s doc comment for the current fix (writing directly to
-  // Cache Storage from the page). Bumped again so everyone's existing
-  // "done" flag doesn't suppress a real retry under this mechanism.
-  const TICKET_PREFETCH_VERSION = "v3";
+  // downloadUrls()'s doc comment for the current fix (a single direct
+  // page-side cache.put(), independently verified afterward with a
+  // caches.match() read rather than trusted at face value). Bumped again
+  // so everyone's existing "done" flag -- quite possibly set by a false
+  // success under the v3 mechanism -- doesn't suppress a real retry here.
+  const TICKET_PREFETCH_VERSION = "v4";
   const TICKET_PREFETCH_KEY = "rougeux_tickets_prefetched";
 
   function prefetchTicketFiles() {

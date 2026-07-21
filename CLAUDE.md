@@ -304,17 +304,36 @@ still dependency-free vanilla JS.
   success) is no longer needed: `cache.put()` needs an *unconsumed*
   response body to store it, and its own resolution doesn't happen until
   the full body has been read either, so it serves as that same
-  completion signal for free. This still lands in the exact same
+  completion signal for free. This lands in the exact same
   `RUNTIME_CACHE_NAME` bucket the service worker's own opportunistic
-  caching uses, so a duplicate write there from the service worker's
-  own fetch handler for this same request is harmless (same content,
-  same key) — this is additive/defense-in-depth, not a replacement for
-  the service worker's own opportunistic caching of anything *not* run
-  through `downloadUrls()` (e.g. a ticket opened normally without ever
-  tapping "Download" first). Ticket PDFs now go through the exact same
-  `downloadUrls()` path as JPGs and map tiles — no more PDF/JPG split.
-  `TICKET_PREFETCH_VERSION` was bumped to `"v3"` so everyone's existing
-  "done" flag doesn't suppress a real retry under this mechanism.
+  caching uses — but (see the next bullet) `sw.js`'s fetch handler
+  deliberately skips its *own* `cache.put()` for these same requests now,
+  rather than both writing the same response independently. Ticket PDFs
+  go through the exact same `downloadUrls()` path as JPGs and map tiles —
+  no more PDF/JPG split.
+- The very first version of the direct-page-write fix above still
+  regressed to the *original* symptom this whole saga started from —
+  every file "downloading" almost instantly with nothing actually
+  persisted — because `sw.js`'s fetch handler was *also* still doing its
+  own independent `response.clone()` + `cache.put()` for the same
+  request (the original opportunistic-caching logic, still unconditional
+  at the time). Two independent consumers both cloning and reading the
+  same underlying response body is exactly the kind of redundancy that
+  can behave unpredictably across browsers, and is a plausible
+  explanation for a write that reports success without anything actually
+  landing on disk. `sw.js`'s `cacheable` check now also excludes a
+  `forceFresh` (`cache: "reload"`) request — a signal exclusively sent by
+  `downloadUrls()`, never by ordinary browsing — so there is exactly one
+  writer for any downloader-initiated request: the page itself.
+  `downloadUrls()` also no longer trusts `cache.put()`'s own resolution
+  as proof of success by itself; it re-reads the same URL back via a
+  fresh, independent `caches.match()` call afterward and only reports
+  success if that read actually finds the entry — catching the same
+  "write reported success, nothing there" failure mode again in the
+  future regardless of what causes it next time. `TICKET_PREFETCH_VERSION`
+  was bumped to `"v4"` so everyone's existing "done" flag — quite
+  possibly set by a false success under the previous mechanism — doesn't
+  suppress a real retry here.
 - The silent background prefetch (`prefetchTicketFiles()`/
   `prefetchMapTiles()`, on every app load) and the Checklist "Download"
   button can each independently decide to download the exact same set of
