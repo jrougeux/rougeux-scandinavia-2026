@@ -3719,54 +3719,95 @@
       { cache: "reload" },
       crossOrigin ? { mode: "no-cors" } : null
     );
-    let nextIndex = 0;
-    let remaining = urls.length;
-    let failedCount = 0;
+    const total = urls.length;
 
-    function loadNext() {
-      if (nextIndex >= urls.length) return;
-      const url = urls[nextIndex++];
-      let settledOnce = false;
-      const timeoutId = setTimeout(() => settle(false), 30000);
-      function settle(ok) {
-        if (settledOnce) return;
-        settledOnce = true;
-        clearTimeout(timeoutId);
-        remaining--;
-        if (!ok) failedCount++;
-        if (onProgress) onProgress(urls.length - remaining, urls.length);
-        if (remaining <= 0) onDone(urls.length - failedCount, urls.length);
-        else loadNext();
-      }
-      fetch(url, fetchOpts).then((res) => {
-        const headersOk = crossOrigin ? true : !!(res && res.ok);
-        if (!headersOk) {
-          // Still fully consume the body so a failed/erroring response
-          // doesn't leave a request hanging before moving on.
-          return res.blob().then(() => settle(false), () => settle(false));
+    // Runs the actual fetch loop over `pending` (the subset of `urls`
+    // not already sitting in IndexedDB -- see the getMany() check below),
+    // with `alreadyGoodCount` folded into progress/completion from the
+    // start. settledTotal counts every *attempt* settling (success or
+    // failure, starting from alreadyGoodCount so the progress bar reads
+    // as a fraction of the *original* full url list, not just the
+    // still-pending remainder); succeededTotal is the real count onDone
+    // reports.
+    function runPending(pending, alreadyGoodCount) {
+      let settledTotal = alreadyGoodCount;
+      let succeededTotal = alreadyGoodCount;
+      if (onProgress) onProgress(settledTotal, total);
+      if (!pending.length) { onDone(succeededTotal, total); return; }
+
+      let nextIndex = 0;
+      function loadNext() {
+        if (nextIndex >= pending.length) return;
+        const url = pending[nextIndex++];
+        let settledOnce = false;
+        const timeoutId = setTimeout(() => settle(false), 30000);
+        function settle(ok) {
+          if (settledOnce) return;
+          settledOnce = true;
+          clearTimeout(timeoutId);
+          settledTotal++;
+          if (ok) succeededTotal++;
+          if (onProgress) onProgress(settledTotal, total);
+          if (settledTotal >= total) onDone(succeededTotal, total);
+          else loadNext();
         }
-        const expectedLength = crossOrigin ? null : parseInt(res.headers.get("content-length") || "", 10) || null;
-        res.blob().then((blob) => {
-          if (!blob || blob.size === 0 || (expectedLength != null && blob.size < expectedLength * 0.9)) {
-            settle(false);
-            return;
+        fetch(url, fetchOpts).then((res) => {
+          const headersOk = crossOrigin ? true : !!(res && res.ok);
+          if (!headersOk) {
+            // Still fully consume the body so a failed/erroring response
+            // doesn't leave a request hanging before moving on.
+            return res.blob().then(() => settle(false), () => settle(false));
           }
-          idbKeyval.set(url, blob).then(
-            // Re-read the entry back independently rather than trusting
-            // idbKeyval.set()'s own resolution alone -- same "verify,
-            // don't just trust a completion signal" principle this whole
-            // offline-data feature has followed since it first ran into
-            // exactly that failure mode with Cache Storage.
-            () => idbKeyval.get(url).then(
-              (check) => settle(!!check && check.size === blob.size),
+          const expectedLength = crossOrigin ? null : parseInt(res.headers.get("content-length") || "", 10) || null;
+          res.blob().then((blob) => {
+            if (!blob || blob.size === 0 || (expectedLength != null && blob.size < expectedLength * 0.9)) {
+              settle(false);
+              return;
+            }
+            idbKeyval.set(url, blob).then(
+              // Re-read the entry back independently rather than trusting
+              // idbKeyval.set()'s own resolution alone -- same "verify,
+              // don't just trust a completion signal" principle this whole
+              // offline-data feature has followed since it first ran into
+              // exactly that failure mode with Cache Storage.
+              () => idbKeyval.get(url).then(
+                (check) => settle(!!check && check.size === blob.size),
+                () => settle(false)
+              ),
               () => settle(false)
-            ),
-            () => settle(false)
-          );
+            );
+          }, () => settle(false));
         }, () => settle(false));
-      }, () => settle(false));
+      }
+      for (let c = 0; c < Math.min(concurrency, pending.length); c++) loadNext();
     }
-    for (let c = 0; c < Math.min(concurrency, urls.length); c++) loadNext();
+
+    // Skip re-fetching URLs already successfully stored from a previous
+    // (possibly interrupted) run -- without this, any interruption
+    // partway through a long download (the tab backgrounding, the phone
+    // locking, a service worker update reloading the page -- much likelier
+    // for map tiles' ~2,400 URLs across several minutes than tickets'
+    // ~28) meant the *entire* batch re-fetched from scratch on the next
+    // attempt: not just slow and wasteful, but visually indistinguishable
+    // from "the download reverts back to 0%", since this function's own
+    // progress counters always started over at zero with no memory of
+    // what a previous, interrupted call had already finished. One batched
+    // idbKeyval.getMany() upfront is far cheaper than a get() per URL.
+    idbKeyval.getMany(urls).then((existing) => {
+      const pending = [];
+      let alreadyGoodCount = 0;
+      urls.forEach((url, i) => {
+        const blob = existing[i];
+        if (blob && blob.size > 0) alreadyGoodCount++;
+        else pending.push(url);
+      });
+      runPending(pending, alreadyGoodCount);
+    }).catch(() => {
+      // If the upfront batch check itself fails for some reason, fall
+      // back to treating everything as pending -- safe, just loses the
+      // "skip already downloaded" optimization for this one run.
+      runPending(urls.slice(), 0);
+    });
   }
 
   // Real, current presence check against IndexedDB, for both resource

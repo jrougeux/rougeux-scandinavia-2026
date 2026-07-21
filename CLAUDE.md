@@ -502,6 +502,27 @@ still dependency-free vanilla JS.
   difference. Its object URL is revoked once the tile's `load`/`error`
   event fires, since Leaflet never reassigns a new `src` onto the same
   `<img>` element afterward.
+- `downloadToIdb()` did not originally check whether a URL was already
+  successfully stored before re-fetching it -- for ~28 ticket files this
+  was barely noticeable (a full re-run finishes in a few seconds either
+  way), but map tiles are ~2,400 URLs taking several minutes, and
+  anything that interrupts a run partway through that (the tab
+  backgrounding, the phone locking, a service worker update reloading the
+  page) meant the *entire* batch re-fetched from scratch on the next
+  attempt -- not just slow and wasteful of bandwidth, but visually
+  indistinguishable from "the download reverts back to 0%", since this
+  function's own progress counters had no memory of what a previous,
+  interrupted call had already finished. It now calls
+  `idbKeyval.getMany(urls)` once upfront, splits `urls` into
+  already-good (existing entry with a non-zero size) vs. still-`pending`,
+  folds the already-good count into `onProgress`/`onDone` immediately
+  (so a resumed run's very first progress callback reflects real prior
+  progress, not zero), and only actually fetches the `pending` subset --
+  making a long download properly resumable across an interruption
+  instead of restarting from scratch every time. Verified with a
+  scripted test covering a partial resume (6 of 10 already stored, only
+  the remaining 4 fetched), a fresh start (all 10 fetched), and an
+  already-fully-downloaded set (0 fetched).
 
 ## Data shape
 
