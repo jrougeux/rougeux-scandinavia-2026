@@ -186,6 +186,33 @@ still dependency-free vanilla JS.
   `downloadUrls()`'s internal guard) so it can show a specific "you're
   offline" message immediately, instead of a generic post-hoc failure
   count.
+- `downloadUrls()`'s `settle()` only fires after calling `res.blob()` on
+  the fetch response and letting *that* resolve, not right after the
+  `fetch()` promise itself resolves. This matters because `fetch()`
+  resolves as soon as response **headers** arrive, not once the full
+  body has actually finished transferring -- checking `res.ok` and
+  calling a request "done" at that point meant a multi-megabyte ticket
+  PDF could be reported complete in a fraction of a second, long before
+  it had actually finished downloading (the real giveaway that surfaced
+  this: a progress bar finishing near-instantly for files that should
+  take several seconds). The `.blob()` result itself is discarded here —
+  the service worker's own `cache.put()`, operating on its own separate
+  `.clone()` of the response, is what actually persists the file — this
+  call exists purely to force waiting for the real, complete transfer
+  before reporting success. A body that fails partway through (the
+  connection drops after headers arrived but before the file finished)
+  is correctly treated as a failure regardless of what the headers said.
+- Map tile concurrency (`prefetchMapTiles()` and the Checklist tab's
+  "Download" button) is 3, not a more aggressive number, because
+  `tile.openstreetmap.org`'s usage policy actively rate-limits/blocks
+  request patterns that look like bulk scraping, and firing a burst of
+  ~2,400 tile requests at high concurrency risks exactly that. A
+  rate-limited or blocked response still *resolves* (it doesn't reject),
+  so under the "opaque cross-origin response = treat any resolution as
+  success" rule described above, it would get miscounted as a
+  successfully-cached tile when it's actually an error response —
+  plausibly part of why some zoom levels came back incomplete even
+  though the download reported itself complete.
 
 ## Data shape
 

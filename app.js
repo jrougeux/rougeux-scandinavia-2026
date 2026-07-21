@@ -3115,7 +3115,7 @@
       "Tickets & vouchers", TICKET_FILES.map(ticketFileUrl), 3, false, TICKET_PREFETCH_KEY, TICKET_PREFETCH_VERSION
     ));
     offlineCard.appendChild(renderOfflineDataRow(
-      "Map tiles (Sweden & Norway)", buildMapPrefetchUrls(), 6, true, MAP_PREFETCH_KEY, MAP_PREFETCH_VERSION
+      "Map tiles (Sweden & Norway)", buildMapPrefetchUrls(), 3, true, MAP_PREFETCH_KEY, MAP_PREFETCH_VERSION
     ));
     container.appendChild(offlineCard);
 
@@ -3482,10 +3482,24 @@
         if (remaining <= 0) onDone(urls.length - failedCount, urls.length);
         else loadNext();
       }
-      fetch(url, fetchOpts).then(
-        (res) => settle(fetchOpts ? true : !!(res && res.ok)),
-        () => settle(false)
-      );
+      // fetch()'s promise resolves as soon as response *headers* arrive --
+      // not once the full body has actually finished transferring. For a
+      // multi-megabyte ticket PDF, checking res.ok and calling this
+      // settled immediately meant the progress bar (and this whole
+      // "done" signal) could complete almost instantly, long before the
+      // file had actually been fully downloaded -- the giveaway being a
+      // multi-second/multi-megabyte file "finishing" in a fraction of a
+      // second. Explicitly consuming the body via res.blob() (discarding
+      // the result -- the service worker's own cache.put(), operating on
+      // its own separate clone of the response, is what actually persists
+      // it) forces this to wait for the real, complete transfer. A body
+      // that fails partway through (connection drops after headers
+      // arrived but before the file finished) is treated as a failure
+      // regardless of what the headers said.
+      fetch(url, fetchOpts).then((res) => {
+        const headersOk = fetchOpts ? true : !!(res && res.ok);
+        return res.blob().then(() => settle(headersOk), () => settle(false));
+      }, () => settle(false));
     }
     for (let c = 0; c < Math.min(concurrency, urls.length); c++) loadNext();
   }
@@ -3509,17 +3523,23 @@
 
   // Best-effort, low-priority background fetch: a bounded number of tile
   // requests run concurrently (politer to the tile server and the
-  // device's network than firing hundreds at once), and the prefetch is
-  // only marked "done" in localStorage once every tile has resolved
-  // (success or failure) -- so an interrupted first run (e.g. the tab
-  // closed early) retries in full next time instead of silently staying
-  // incomplete forever.
+  // device's network than firing hundreds at once -- 3, not a more
+  // aggressive number, since tile.openstreetmap.org's usage policy
+  // actively rate-limits/blocks bulk-looking request patterns, and a
+  // ~2,400-tile burst at high concurrency risks exactly that; a
+  // rate-limited response still resolves rather than rejecting, so it'd
+  // be miscounted as a successful fetch of an error response instead of
+  // the real tile -- plausibly part of why some zoom levels come back
+  // incomplete), and the prefetch is only marked "done" in localStorage
+  // once every tile has resolved (success or failure) -- so an
+  // interrupted first run (e.g. the tab closed early) retries in full
+  // next time instead of silently staying incomplete forever.
   function prefetchMapTiles() {
     if (navigator.onLine === false) return;
     try {
       if (localStorage.getItem(MAP_PREFETCH_KEY) === MAP_PREFETCH_VERSION) return;
     } catch (e) {}
-    downloadUrls(buildMapPrefetchUrls(), 6, { crossOrigin: true }, null, () => {
+    downloadUrls(buildMapPrefetchUrls(), 3, { crossOrigin: true }, null, () => {
       try { localStorage.setItem(MAP_PREFETCH_KEY, MAP_PREFETCH_VERSION); } catch (e) {}
     });
   }

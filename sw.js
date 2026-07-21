@@ -1,4 +1,4 @@
-const CACHE_NAME = "rougeux-trip-v65";
+const CACHE_NAME = "rougeux-trip-v66";
 // Holds everything fetched at runtime and not part of the precached shell
 // below: map tiles (per-day canvas renderer and the trip-wide Leaflet
 // map, including the proactive prefetch in app.js) and ticket PDFs/JPGs.
