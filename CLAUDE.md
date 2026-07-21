@@ -293,6 +293,35 @@ still dependency-free vanilla JS.
   `"v2"` so everyone's existing "done" flag (set by the old,
   PDF-unreliable `fetch()`-only prefetch) doesn't suppress a real retry
   under this new mechanism.
+- The silent background prefetch (`prefetchTicketFiles()`/
+  `prefetchMapTiles()`, on every app load) and the Checklist "Download"
+  button can each independently decide to download the exact same set of
+  files -- e.g. the silent prefetch is still running when the user finds
+  and taps "Download" a few seconds later, or the Checklist view gets
+  rebuilt from scratch mid-download (ticking *any* unrelated checklist
+  item elsewhere on the same page re-renders the whole view, including
+  this row, per this app's "full content replacement on every `render()`"
+  model -- see above) and the user taps the freshly-mounted, once-again-
+  enabled button while the original run is still going in the
+  background. Two independent runs racing against the same URLs looked
+  exactly like "the download restarts partway through, ending lower than
+  where it already was" -- each run's `onProgress`/`onDone` reports its
+  own independently-tracked counts to the same progress bar/button, so
+  whichever run's callback fired most recently won, and a still-in-
+  progress second run's low counts could visually stomp a first run's
+  higher, later progress. `startDedupedDownload()`/
+  `subscribeToActiveDownload()` (keyed by the same string already used
+  for that resource's localStorage "done" flag -- `TICKET_PREFETCH_KEY`/
+  `MAP_PREFETCH_KEY`, already a unique, stable per-resource-type
+  identity) track at most one real download per key at a time in a
+  module-scope `activeDownloads` map; every caller other than the one
+  that actually started it just attaches its `onProgress`/`onDone` to the
+  run already in flight. `renderOfflineDataRow()` checks this on mount
+  too (before falling back to a `countCachedUrls()` snapshot) so a row
+  that gets rebuilt while a download is running immediately shows that
+  it's in progress (button disabled, live progress) instead of looking
+  like a fresh, clickable "Download" button that doesn't know a run is
+  already happening.
 
 ## Data shape
 

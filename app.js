@@ -3075,6 +3075,18 @@
       statusEl.textContent = label || `${done} / ${total} (${pct}%)`;
     }
 
+    function onProgress(done, total) {
+      btn.disabled = true;
+      setProgress(done, total);
+    }
+    function onDone(succeeded, total) {
+      try { localStorage.setItem(prefetchKey, prefetchVersion); } catch (e) {}
+      btn.disabled = false;
+      setProgress(succeeded, total, succeeded === total
+        ? `✓ All ${total} downloaded`
+        : `${succeeded} / ${total} — tap Download to retry the rest`);
+    }
+
     btn.addEventListener("click", () => {
       // Checked here too (not just inside downloadUrls()) so the button
       // can show a clear, specific message immediately -- rather than
@@ -3086,22 +3098,29 @@
       }
       btn.disabled = true;
       setProgress(0, urls.length);
-      const onProgress = (done, total) => setProgress(done, total);
-      const onDone = (succeeded, total) => {
-        try { localStorage.setItem(prefetchKey, prefetchVersion); } catch (e) {}
-        btn.disabled = false;
-        setProgress(succeeded, total, succeeded === total
-          ? `✓ All ${total} downloaded`
-          : `${succeeded} / ${total} — tap Download to retry the rest`);
-      };
-      // Tickets route PDFs through downloadTicketFiles()'s <embed>-based
-      // warmup (see its doc comment) instead of a plain fetch() -- map
-      // tiles have no PDFs and keep using downloadUrls() directly.
-      if (isTickets) downloadTicketFiles(urls, concurrency, onProgress, onDone);
-      else downloadUrls(urls, concurrency, { crossOrigin }, onProgress, onDone);
+      // startDedupedDownload (not downloadTicketFiles()/downloadUrls()
+      // directly) so a tap here merges into an already-running download
+      // for this same resource (the silent background prefetch, or a
+      // still-in-flight run from before this row was last rebuilt) rather
+      // than starting a second, independent run racing the first -- see
+      // its doc comment for why that used to look like the download
+      // restarting partway through.
+      startDedupedDownload(prefetchKey, urls.length, (progress, done) => {
+        // Tickets route PDFs through downloadTicketFiles()'s <embed>-based
+        // warmup (see its doc comment) instead of a plain fetch() -- map
+        // tiles have no PDFs and keep using downloadUrls() directly.
+        if (isTickets) downloadTicketFiles(urls, concurrency, progress, done);
+        else downloadUrls(urls, concurrency, { crossOrigin }, progress, done);
+      }, onProgress, onDone);
     });
 
-    countCachedUrls(urls, (cached, total) => setProgress(cached, total));
+    // If a download for this resource is already running (the silent
+    // background prefetch, most commonly), reflect that immediately
+    // instead of showing a "Checking…" cached-state snapshot that would
+    // just be superseded a moment later anyway.
+    if (!subscribeToActiveDownload(prefetchKey, onProgress, onDone)) {
+      countCachedUrls(urls, (cached, total) => setProgress(cached, total));
+    }
 
     return row;
   }
@@ -3656,6 +3675,60 @@
     }
   }
 
+  // Both the silent background prefetch (prefetchTicketFiles()/
+  // prefetchMapTiles(), on every app load) and the Checklist "Download"
+  // button can independently decide to download the exact same set of
+  // files -- e.g. the silent prefetch is still running when the user
+  // finds and taps "Download" a few seconds after load, or the Checklist
+  // view gets rebuilt from scratch mid-download (ticking any unrelated
+  // checklist item elsewhere on the same page re-renders the whole view,
+  // including this row, per this app's "full content replacement on every
+  // render()" model) and the user taps the freshly-mounted, once-again-
+  // enabled button while the original run is still going in the
+  // background. Two independent runs racing against the same URLs is
+  // exactly what looked like "the download restarts partway through" --
+  // each run's onProgress/onDone calls its own UI callbacks with its own
+  // independently-tracked counts, so two of them interleaved on the same
+  // progress bar/button made completion look like it jumped backward.
+  // activeDownloads keys by the same string used for that resource's
+  // localStorage "done" flag (TICKET_PREFETCH_KEY/MAP_PREFETCH_KEY) --
+  // already a unique, stable per-resource-type identity -- and ensures at
+  // most one real download runs per key at a time; every other caller
+  // just attaches its callbacks to the one already in flight instead of
+  // starting a second, independent run.
+  const activeDownloads = {};
+
+  function subscribeToActiveDownload(key, onProgress, onDone) {
+    const state = activeDownloads[key];
+    if (!state) return false;
+    if (onProgress) state.progressListeners.add(onProgress);
+    if (onDone) state.doneListeners.add(onDone);
+    // Report the current known progress right away so a freshly
+    // (re-)mounted row reflects the in-progress download immediately,
+    // rather than showing stale/misleading state until the next tick.
+    if (onProgress) onProgress(state.done, state.total);
+    return true;
+  }
+
+  function startDedupedDownload(key, total, startFn, onProgress, onDone) {
+    if (activeDownloads[key]) {
+      subscribeToActiveDownload(key, onProgress, onDone);
+      return;
+    }
+    const state = { total, done: 0, progressListeners: new Set(), doneListeners: new Set() };
+    if (onProgress) state.progressListeners.add(onProgress);
+    if (onDone) state.doneListeners.add(onDone);
+    activeDownloads[key] = state;
+    startFn((done, doneTotal) => {
+      state.done = done;
+      state.total = doneTotal;
+      state.progressListeners.forEach((fn) => fn(done, doneTotal));
+    }, (succeeded, doneTotal) => {
+      delete activeDownloads[key];
+      state.doneListeners.forEach((fn) => fn(succeeded, doneTotal));
+    });
+  }
+
   // Best-effort, low-priority background fetch: a bounded number of tile
   // requests run concurrently (politer to the tile server and the
   // device's network than firing hundreds at once -- 3, not a more
@@ -3674,7 +3747,13 @@
     try {
       if (localStorage.getItem(MAP_PREFETCH_KEY) === MAP_PREFETCH_VERSION) return;
     } catch (e) {}
-    downloadUrls(buildMapPrefetchUrls(), 3, { crossOrigin: true }, null, () => {
+    const urls = buildMapPrefetchUrls();
+    // startDedupedDownload (not downloadUrls() directly) so this merges
+    // into a Checklist "Download" tap already in flight for map tiles,
+    // instead of racing it -- see startDedupedDownload's doc comment.
+    startDedupedDownload(MAP_PREFETCH_KEY, urls.length, (onProgress, onDone) => {
+      downloadUrls(urls, 3, { crossOrigin: true }, onProgress, onDone);
+    }, null, () => {
       try { localStorage.setItem(MAP_PREFETCH_KEY, MAP_PREFETCH_VERSION); } catch (e) {}
     });
   }
@@ -3700,12 +3779,18 @@
     try {
       if (localStorage.getItem(TICKET_PREFETCH_KEY) === TICKET_PREFETCH_VERSION) return;
     } catch (e) {}
+    const urls = TICKET_FILES.map(ticketFileUrl);
     // Lower concurrency than prefetchMapTiles()'s 6 -- these are
     // individual PDFs/JPGs up to ~2MB each (map tiles are a few KB), so
     // fewer of them in flight at once is politer to the connection.
-    // downloadTicketFiles() (not downloadUrls() directly) so PDFs get the
-    // <embed>-based warmup they actually need -- see its doc comment.
-    downloadTicketFiles(TICKET_FILES.map(ticketFileUrl), 3, null, () => {
+    // startDedupedDownload (not downloadTicketFiles() directly) so this
+    // merges into a Checklist "Download" tap already in flight for
+    // tickets, instead of racing it -- see its doc comment for why two
+    // independent runs used to look like the download restarting
+    // partway through.
+    startDedupedDownload(TICKET_PREFETCH_KEY, urls.length, (onProgress, onDone) => {
+      downloadTicketFiles(urls, 3, onProgress, onDone);
+    }, null, () => {
       try { localStorage.setItem(TICKET_PREFETCH_KEY, TICKET_PREFETCH_VERSION); } catch (e) {}
     });
   }
