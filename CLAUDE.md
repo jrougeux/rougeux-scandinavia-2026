@@ -363,6 +363,49 @@ still dependency-free vanilla JS.
   it's in progress (button disabled, live progress) instead of looking
   like a fresh, clickable "Download" button that doesn't know a run is
   already happening.
+- Even the single-writer + independent-`caches.match()`-verification fix
+  above wasn't the end of this saga: the exact same "reports success,
+  nothing real happens" symptom recurred again after it shipped. Existence
+  alone (`caches.match()` returning *something*) isn't proof of a *good*
+  entry — a stale, empty, or truncated response left over from any of
+  this saga's earlier broken-write mechanisms (there have been a few)
+  would still pass an existence-only check, since `RUNTIME_CACHE_NAME` is
+  deliberately never wiped across `CACHE_NAME` bumps. `downloadUrls()` now
+  also compares the cached entry's real byte size (read via `.blob().size`
+  on the re-fetched cache entry) against the original response's
+  `Content-Length` header (captured before `cache.put()` ever touches it),
+  requiring at least 90% of the expected size before counting a download
+  as genuinely successful — allowing minor slack for legitimate transfer-
+  encoding differences, but catching a wildly undersized or empty result.
+  Cross-origin opaque tile responses can't have their headers read at all
+  (same reason they can't use `res.ok`), so this size check is skipped for
+  them and existence remains the only available signal there.
+- Repeated rounds of testing this exact feature — several with genuinely
+  broken write mechanisms at different points — mean `RUNTIME_CACHE_NAME`
+  on a device that's been used to test this app across this whole saga
+  may already contain a fair amount of stale/bad cruft from *before* any
+  of the checks above existed, and/or be at risk of the origin's storage
+  quota entirely (a real possibility after this many rounds of re-
+  downloading ~9MB of tickets and ~25-45MB of map tiles) — either of which
+  can cause silent, hard-to-diagnose failures with no way to inspect them
+  without plugging into a Mac and using Safari's Web Inspector. The
+  Checklist tab's Offline Data card now surfaces both of these directly,
+  no Web Inspector needed: `renderStorageEstimateRow()` shows real,
+  current `navigator.storage.estimate()` usage/quota for this origin
+  (best-effort — support isn't universal, and the row simply omits itself
+  if the call fails or is unavailable; note the function returns `null`
+  rather than building a DOM node and calling `.remove()` on it
+  synchronously in the unsupported case, since an element has no parent
+  to remove itself from until *after* the caller appends it — calling
+  `.remove()` before that append would silently do nothing and leave a
+  stuck "Checking storage…" placeholder visible forever), and a "Clear
+  cached data & start fresh" button (behind a native `confirm()`) that
+  calls `caches.delete(RUNTIME_CACHE_NAME)` and clears both
+  `TICKET_PREFETCH_KEY`/`MAP_PREFETCH_KEY` "done" flags, then
+  re-`render()`s -- wiping every possible stale/bad entry from this app's
+  entire testing history in one action, cheap to recover from since
+  everything here is just re-downloaded from this same static site.
+  `TICKET_PREFETCH_VERSION` was bumped to `"v5"` alongside this.
 
 ## Data shape
 

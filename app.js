@@ -3121,6 +3121,34 @@
     return row;
   }
 
+  // navigator.storage.estimate() reports real, current disk usage/quota
+  // for this origin -- surfaced directly in the Offline Data card so a
+  // storage-quota problem (Cache Storage silently refusing new writes, or
+  // even getting evicted wholesale, once an origin is at/near its quota)
+  // is visible without needing to plug the phone into a Mac and use
+  // Safari's Web Inspector. Support isn't universal, so this is best-
+  // effort and simply omits itself if the API (or the call) fails.
+  function renderStorageEstimateRow() {
+    // Return null (rather than building a node and trying to .remove()
+    // it later) when unsupported -- an element only has a parent to
+    // remove itself from *after* the caller appends it, so calling
+    // .remove() from inside this function, before that append ever
+    // happens, would silently do nothing and leave a stuck "Checking
+    // storage…" placeholder visible forever.
+    if (!navigator.storage || !navigator.storage.estimate) return null;
+    const row = document.createElement("div");
+    row.className = "offline-data-storage";
+    row.textContent = "Checking storage…";
+    navigator.storage.estimate().then((est) => {
+      const usedMb = (est.usage / (1024 * 1024)).toFixed(1);
+      const quotaMb = est.quota ? (est.quota / (1024 * 1024)).toFixed(0) : null;
+      row.textContent = quotaMb
+        ? `Using ${usedMb} MB of ~${quotaMb} MB available on this device`
+        : `Using ${usedMb} MB`;
+    }).catch(() => { row.remove(); });
+    return row;
+  }
+
   function renderChecklistView() {
     const container = document.createElement("div");
     container.className = "checklist-view";
@@ -3138,6 +3166,35 @@
     offlineCard.appendChild(renderOfflineDataRow(
       "Map tiles (Sweden & Norway)", buildMapPrefetchUrls(), 3, true, MAP_PREFETCH_KEY, MAP_PREFETCH_VERSION
     ));
+    const storageRow = renderStorageEstimateRow();
+    if (storageRow) offlineCard.appendChild(storageRow);
+
+    // A hard reset: wipes the entire RUNTIME_CACHE_NAME bucket (every
+    // cached ticket and map tile) and both "done" flags, so a bad/stale
+    // entry left over from any earlier, broken write in this app's
+    // history can't keep silently interfering with a fresh download --
+    // existence/size checks (see downloadUrls()) catch a bad entry going
+    // forward, but this clears out anything already sitting there from
+    // before those checks existed. Cheap to recover from since everything
+    // here is just re-downloaded from this same static site.
+    const clearBtn = document.createElement("button");
+    clearBtn.type = "button";
+    clearBtn.className = "offline-data-clear-btn";
+    clearBtn.textContent = "Clear cached data & start fresh";
+    clearBtn.addEventListener("click", () => {
+      if (!window.confirm("This deletes every cached ticket and map tile so they can be freshly re-downloaded. Continue?")) return;
+      clearBtn.disabled = true;
+      clearBtn.textContent = "Clearing…";
+      caches.delete(RUNTIME_CACHE_NAME).then(() => {
+        try {
+          localStorage.removeItem(TICKET_PREFETCH_KEY);
+          localStorage.removeItem(MAP_PREFETCH_KEY);
+        } catch (e) {}
+        render();
+      });
+    });
+    offlineCard.appendChild(clearBtn);
+
     container.appendChild(offlineCard);
 
     const label = document.createElement("div");
@@ -3563,13 +3620,32 @@
           // doesn't leave a request hanging before moving on.
           return res.blob().then(() => settle(false), () => settle(false));
         }
+        // Captured before cache.put() touches the response at all --
+        // Content-Length isn't readable on a cross-origin opaque response,
+        // so this is null for map tiles (existence-only check below).
+        const expectedLength = crossOrigin ? null : parseInt(res.headers.get("content-length") || "", 10) || null;
         return caches.open(RUNTIME_CACHE_NAME).then((cache) => cache.put(url, res)).then(
           // Re-read the entry back via a fresh caches.match() rather than
           // trusting cache.put()'s own resolution alone -- this is a
           // completely independent read path from the write that just
           // happened, so it can't share whatever caused a past write to
           // report success without anything actually being persisted.
-          () => caches.match(url).then((check) => settle(!!check), () => settle(false)),
+          // Existence alone isn't enough either, though: a stale, empty,
+          // or truncated entry left over from an earlier broken write
+          // (this saga has had a few) would still pass an existence-only
+          // check. Comparing the cached entry's real byte size against the
+          // Content-Length the server originally reported catches that --
+          // allowing some slack (a compressed transfer's on-the-wire
+          // length can legitimately differ slightly from the decoded body
+          // size), but not a wildly undersized or empty result.
+          () => caches.match(url).then((check) => {
+            if (!check) { settle(false); return; }
+            if (expectedLength == null) { settle(true); return; }
+            check.blob().then(
+              (blob) => settle(blob.size > 0 && blob.size >= expectedLength * 0.9),
+              () => settle(false)
+            );
+          }, () => settle(false)),
           () => settle(false)
         );
       }, () => settle(false));
@@ -3697,14 +3773,17 @@
   // connection is simply missing in airplane mode. ~9MB total across all
   // current tickets -- small enough to fetch in full on first load rather
   // than needing the zoom-level-style range logic prefetchMapTiles() has.
-  // v4: earlier versions never reliably cached ticket PDFs for offline
+  // v5: earlier versions never reliably cached ticket PDFs for offline
   // use on iOS Safari, even when they reported success -- see
   // downloadUrls()'s doc comment for the current fix (a single direct
-  // page-side cache.put(), independently verified afterward with a
-  // caches.match() read rather than trusted at face value). Bumped again
-  // so everyone's existing "done" flag -- quite possibly set by a false
-  // success under the v3 mechanism -- doesn't suppress a real retry here.
-  const TICKET_PREFETCH_VERSION = "v4";
+  // page-side cache.put(), verified afterward against the real cached
+  // byte size, not just existence). Bumped again so everyone's existing
+  // "done" flag -- quite possibly set by a false success under an earlier
+  // mechanism -- doesn't suppress a real retry here. The Checklist tab's
+  // new "Clear cached data & start fresh" button (see renderChecklistView)
+  // also directly wipes any stale entries already sitting in
+  // RUNTIME_CACHE_NAME from before these checks existed.
+  const TICKET_PREFETCH_VERSION = "v5";
   const TICKET_PREFETCH_KEY = "rougeux_tickets_prefetched";
 
   function prefetchTicketFiles() {
