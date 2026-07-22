@@ -344,7 +344,15 @@
   // secret credential, just a rate-limited/quota-tracked identifier, the
   // same pattern as e.g. a client-side Google Maps API key.
   const STADIA_API_KEY = "dd92ab68-4a64-443f-8f18-995a3b55cbc6";
-  const STADIA_TILE_STYLE = "alidade_smooth";
+  // "osm_bright", not the initially-chosen "alidade_smooth" -- the latter
+  // is a deliberately minimalist style with no POI icons/labels at all
+  // (no restaurants, shops, cafes, landmarks), and, being lighter-weight,
+  // produces much smaller average tile sizes -- both of which matched
+  // what was actually reported after using it (no business-level detail,
+  // and a suspiciously small total download size). "osm_bright" is
+  // Stadia's classic-OSM-like, detail-rich style, explicitly documented
+  // by them as the right choice "where your users need lots of POIs."
+  const STADIA_TILE_STYLE = "osm_bright";
   function stadiaTileUrl(z, x, y) {
     return `https://tiles.stadiamaps.com/tiles/${STADIA_TILE_STYLE}/${z}/${x}/${y}.png?api_key=${STADIA_API_KEY}`;
   }
@@ -3621,15 +3629,14 @@
   // Together ~2,400 tiles / ~25-45MB as of the current lodging list --
   // deliberately still bounded to the actual trip region across its
   // practical zoom range, not "all of Scandinavia at every zoom level."
-  // v5: tile source switched from tile.openstreetmap.org to Stadia Maps
-  // (see stadiaTileUrl()'s doc comment for the full story -- repeated
-  // live bulk-download attempts against OSM's volunteer-run server were
-  // rate-limited/blocked, and a subsequent attempt to vendor tiles as
-  // static files turned out to have silently downloaded OSM's "Access
-  // Blocked" warning image for the entire run, since caught and
-  // reverted). Bumped so an existing "done" flag from any earlier
-  // mechanism doesn't suppress a real run under this one.
-  const MAP_PREFETCH_VERSION = "v5"; // bump to force a re-run (e.g. if lodging locations change, or this coverage is widened further)
+  // v6: switched Stadia Maps style from "alidade_smooth" (deliberately
+  // minimalist, no POI/business labels) to "osm_bright" (see
+  // STADIA_TILE_STYLE's doc comment), and added the secondary-point
+  // prefetch above (uniqueSecondaryPoints()) to cover the highest zoom
+  // levels around every activity/dining/hub/POI, not just lodging.
+  // Bumped so an existing "done" flag from the old style/scope doesn't
+  // suppress a real run under this one.
+  const MAP_PREFETCH_VERSION = "v6"; // bump to force a re-run (e.g. if lodging locations change, or this coverage is widened further)
   const MAP_PREFETCH_KEY = "rougeux_map_tiles_prefetched";
   const MAP_PREFETCH_OVERVIEW_ZOOMS = [4, 5, 6, 7, 8, 9];
   const MAP_PREFETCH_CITY_VIEWPORT_ZOOMS = [9, 10, 11, 12, 13, 14, 15, 16, 17];
@@ -3638,6 +3645,24 @@
   // fill a full-screen viewport, so this covers that too, not just the
   // per-day map card.
   const MAP_PREFETCH_CITY_VIEWPORT = 900;
+  // A user zoomed all the way in (15-17) is most likely looking at
+  // something *specific* -- a restaurant, a landmark, a station -- not
+  // idly panning around the general vicinity of their lodging the way
+  // MAP_PREFETCH_CITY_VIEWPORT's much larger 900px radius assumes. Real-
+  // world geographic coverage for a *fixed pixel* radius shrinks sharply
+  // as zoom increases, so the lodging-only prefetch above left every
+  // other point of interest -- exactly the places someone would actually
+  // zoom in on -- uncovered at the highest zoom levels, which is what
+  // surfaced as "the three highest zoom levels contain no data." This
+  // adds a second, smaller-radius prefetch centered on every other real
+  // point this trip already has coordinates for (activities, dining,
+  // transport/walking hubs, and points of interest), at just the zoom
+  // levels where that gap actually showed up. tileKeysForViewport's own
+  // Set-based deduplication (folded together with the lodging prefetch's
+  // tiles in buildMapPrefetchUrls() below) means overlapping coverage
+  // near a lodging point costs nothing extra.
+  const MAP_PREFETCH_SECONDARY_ZOOMS = [15, 16, 17];
+  const MAP_PREFETCH_SECONDARY_VIEWPORT = 400;
 
   function uniqueLodgingPoints() {
     const seen = new Set();
@@ -3648,6 +3673,32 @@
       if (seen.has(key)) return;
       seen.add(key);
       points.push([l.lat, l.lon]);
+    });
+    return points;
+  }
+
+  // Every non-lodging point this trip has real coordinates for --
+  // activities, dining, transport/walking hubs, and Wiki points of
+  // interest (TRIP_MAP_POINTS, already computed once at module load).
+  // "Country"/"Region" POIs (e.g. the "Sweden"/"Norway" overview entries)
+  // are excluded -- their coordinates are a country/region centroid, not
+  // a real place someone would zoom in on street-level, so prefetching a
+  // detailed radius around one would be geographically meaningless.
+  function uniqueSecondaryPoints() {
+    const seen = new Set();
+    const points = [];
+    function addPoint(lat, lon) {
+      if (typeof lat !== "number" || typeof lon !== "number") return;
+      const key = lat.toFixed(4) + "," + lon.toFixed(4);
+      if (seen.has(key)) return;
+      seen.add(key);
+      points.push([lat, lon]);
+    }
+    TRIP_MAP_POINTS.detailPoints.forEach((p) => addPoint(p.lat, p.lon));
+    TRIP_MAP_POINTS.hubPoints.forEach((p) => addPoint(p.lat, p.lon));
+    TRIP_MAP_POINTS.poiPoints.forEach((p) => {
+      if (p.category === "Country" || p.category === "Region") return;
+      addPoint(p.lat, p.lon);
     });
     return points;
   }
@@ -3699,6 +3750,15 @@
     });
     MAP_PREFETCH_OVERVIEW_ZOOMS.forEach((zoom) => {
       tileUrlsForBounds(points, zoom, 1).forEach((u) => urls.add(u));
+    });
+    // Secondary points (see uniqueSecondaryPoints()'s doc comment) --
+    // added into the same urls Set, so any tile already covered by the
+    // lodging viewport above costs nothing extra here.
+    const secondaryPoints = uniqueSecondaryPoints();
+    MAP_PREFETCH_SECONDARY_ZOOMS.forEach((zoom) => {
+      secondaryPoints.forEach(([lat, lon]) => {
+        tileUrlsForViewport(lat, lon, zoom, MAP_PREFETCH_SECONDARY_VIEWPORT, 1).forEach((u) => urls.add(u));
+      });
     });
     return Array.from(urls);
   }

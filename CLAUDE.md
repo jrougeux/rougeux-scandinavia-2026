@@ -662,6 +662,53 @@ still dependency-free vanilla JS.
   30-tile concurrency-3 burst (matching the app's real download pattern)
   with zero errors and full content variety before considering the
   source trustworthy. `MAP_PREFETCH_VERSION` bumped to `"v5"`.
+- The full ~2,385-tile download worked end to end (all downloaded,
+  available offline) on the first real try with Stadia Maps, confirming
+  the switch actually fixed the reliability saga -- but the user reported
+  two follow-up problems with the *content*, not the download mechanism:
+  the top three zoom levels appeared blank when panning around while
+  offline, and there was no business/POI-level detail (shops, cafés,
+  landmarks) the way the original OpenStreetMap style showed. Both traced
+  back to the same original choice: `STADIA_TILE_STYLE` was
+  `"alidade_smooth"`, a deliberately minimalist style with **no POI
+  labels at all** and much smaller average tile sizes (both directly
+  explain the "no business detail" report and a suspiciously small
+  reported storage usage) -- switched to `"osm_bright"`, Stadia's
+  classic-OSM-style, detail-rich option, explicitly documented by them as
+  the right choice "where your users need lots of POIs." The "blank at
+  high zoom" report turned out to be unrelated to the style and
+  completely unrelated to Stadia's data (verified directly: `curl`-fetched
+  real tiles at zoom 15-17 for every lodging location, both dense-urban
+  Stockholm and small-town/rural ones, and every single one had
+  substantial, varied real content -- ruling out "Stadia has no data
+  there" before looking anywhere else). The actual cause: the prefetch
+  only ever covered a radius around the 6 **lodging** points
+  (`MAP_PREFETCH_CITY_VIEWPORT`, 900px). Real-world geographic coverage
+  for a *fixed pixel* radius shrinks sharply as zoom increases, so by
+  zoom 15-17 that 900px radius covers only a small area immediately
+  around each hotel -- a user zoomed in that far is far more likely to be
+  looking at something *specific* nearby (a restaurant, a landmark, a
+  station) than idly panning the block around their lodging, and every
+  point other than the 6 lodging ones had zero coverage at those zoom
+  levels. `uniqueSecondaryPoints()` (right after `uniqueLodgingPoints()`)
+  gathers every other real coordinate this trip already has --
+  `TRIP_MAP_POINTS.detailPoints`/`.hubPoints`/`.poiPoints` (already
+  computed once at module load for the trip-wide map's own pins) --
+  excluding POIs with a `"Country"`/`"Region"` category (their
+  coordinate is a country/region centroid, not a real place to zoom in
+  on). `buildMapPrefetchUrls()` now also prefetches a smaller,
+  `MAP_PREFETCH_SECONDARY_VIEWPORT` (400px) radius around every one of
+  those points, at `MAP_PREFETCH_SECONDARY_ZOOMS` (15-17 specifically --
+  exactly the zoom range the gap was reported at; lower zoom levels
+  already have reasonable coverage from the overview + lodging viewports
+  and weren't reported as a problem). Folded into the same `Set` as the
+  lodging prefetch, so any tile already covered near a lodging point
+  costs nothing extra. Computed and compared several candidate radii/zoom
+  combinations against the app's real coordinate data before picking this
+  one (~115 deduplicated secondary points, adding ~2,450 tiles -- roughly
+  doubling the total to ~4,800, comfortably inside Stadia's 100MB/device
+  allowance even accounting for `osm_bright`'s larger average tile size).
+  `MAP_PREFETCH_VERSION` bumped to `"v6"`.
 
 ## Data shape
 
