@@ -1044,10 +1044,6 @@
     "origin": "Royal Palace (Stockholm)",
     "destination": "Östermalms Saluhall"
   },
-  "24": {
-    "origin": "Östermalm",
-    "destination": "Gamla Stan"
-  },
   "28": {
     "origin": "Munkbron 15 (Stockholm)",
     "destination": "Vasa Museum"
@@ -1190,6 +1186,7 @@
   // no entry here at all because both ends already coincide with an
   // existing pin.
   const MAP_WALK_HUBS = {
+    "24": { "origin": "Gamla Stan" },
     "74": { "destination": "Stadsträdgården (Karlstad)" },
     "98": { "destination": "Aker Brygge (Oslo)" },
     "100": { "origin": "Aker Brygge (Oslo)" },
@@ -1217,6 +1214,9 @@
   "17": {
     "origin": "Café Chokladkoppen, Stortorget 18, Stockholm, Sweden",
     "destination": "Storkyrkan Cathedral, Stockholm, Sweden"
+  },
+  "24": {
+    "origin": "59.324778,18.072667"
   },
   "26": {
     "origin": "Aifur, Stockholm, Sweden"
