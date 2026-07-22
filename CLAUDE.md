@@ -1071,8 +1071,11 @@ Defined as CSS custom properties in `styles.css` (`:root`):
   Flåm hub / the "Flåm" POI / the Flåmsbana POI, all end up in one
   cluster rather than pairwise-nudged into each other), then spreads every
   pin in a cluster outward from the cluster's shared centroid by
-  `nudgeMeters` (12m) at evenly-spaced angles -- two pins land 24m apart,
-  three land ~21m apart from each other, etc. -- enough separation to be
+  `nudgeMeters` (7m -- an earlier pass used 12m, but that read as too far
+  off the real location once seen on a device; 7m is enough separation to
+  click each pin independently without straying noticeably from the
+  actual spot) at evenly-spaced angles -- two pins land 14m apart, three
+  land ~12m apart from each other, etc. -- enough separation to be
   independently clickable at any normal zoom level while each pin stays
   visually anchored to the same real spot. Cluster members are sorted by
   their own stable `key` before assigning angles, not left in whatever

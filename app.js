@@ -2387,7 +2387,7 @@
       });
     }
     const allPoints = [...cityPoints, ...detailPoints, ...hubPoints, ...poiPoints];
-    spreadOverlaps(allPoints, 25, 12);
+    spreadOverlaps(allPoints, 25, 7);
 
     // legPinIndex/diningPinByAddress/poiPinById were built from each
     // referenced point's *pre-nudge* lat/lon (copied by value, not by
