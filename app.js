@@ -323,6 +323,32 @@
   const MAP_CANVAS_W = 640;
   const MAP_CANVAS_H = 320;
 
+  // Tiles come from Stadia Maps, not tile.openstreetmap.org directly --
+  // see CLAUDE.md's "Offline map tile downloads" notes for the full
+  // history (repeated live bulk-download attempts against OSM's own
+  // volunteer-run tile server were rate-limited/blocked outright, and a
+  // subsequent attempt to vendor tiles as static files turned out to
+  // have silently downloaded OSM's "Access Blocked" warning image
+  // instead of real tiles for the entire run). Stadia Maps' terms
+  // explicitly permit exactly this app's use case -- personal, non-
+  // commercial use, with offline caching of up to 100MB per device
+  // allowed as a general term, not restricted to paid plans -- and,
+  // unlike a raw tile.openstreetmap.org request, responds with CORS
+  // headers (`Access-Control-Allow-Origin: *`), so fetch() doesn't need
+  // "no-cors" mode at all here: status/headers/Content-Length are all
+  // normally readable, the same as a same-origin request, avoiding the
+  // whole opaque-response-blindness problem that made a blocked/bad tile
+  // response impossible to distinguish from a real one over at OSM.
+  // STADIA_API_KEY is a free-tier key, meant to be used exactly this way
+  // (embedded in client-side code) per Stadia's own docs -- it's not a
+  // secret credential, just a rate-limited/quota-tracked identifier, the
+  // same pattern as e.g. a client-side Google Maps API key.
+  const STADIA_API_KEY = "dd92ab68-4a64-443f-8f18-995a3b55cbc6";
+  const STADIA_TILE_STYLE = "alidade_smooth";
+  function stadiaTileUrl(z, x, y) {
+    return `https://tiles.stadiamaps.com/tiles/${STADIA_TILE_STYLE}/${z}/${x}/${y}.png?api_key=${STADIA_API_KEY}`;
+  }
+
   function lonLatToTilePixel(lat, lon, zoom) {
     const n = Math.pow(2, zoom);
     const latRad = (lat * Math.PI) / 180;
@@ -380,7 +406,7 @@
       for (let ty = tyStart; ty <= tyEnd; ty++) {
         if (ty < 0 || ty >= n) continue;
         const wrappedX = ((tx % n) + n) % n;
-        tileSpecs.push({ url: `https://tile.openstreetmap.org/${zoom}/${wrappedX}/${ty}.png`, tx, ty });
+        tileSpecs.push({ url: stadiaTileUrl(zoom, wrappedX, ty), tx, ty });
       }
     }
 
@@ -555,7 +581,7 @@
 
     const attribution = document.createElement("div");
     attribution.className = "map-attribution";
-    attribution.innerHTML = `Map data © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors`;
+    attribution.innerHTML = `Map tiles © <a href="https://stadiamaps.com/" target="_blank" rel="noopener">Stadia Maps</a>, © <a href="https://openmaptiles.org/" target="_blank" rel="noopener">OpenMapTiles</a> © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors`;
 
     const footer = document.createElement("div");
     footer.className = "map-footer";
@@ -2312,17 +2338,22 @@
   // L.TileLayer.prototype.createTile (down to reusing its private
   // _tileOnLoad()/_tileOnError() so fade-in/error handling behaves
   // exactly as it would for a normal tile), just deciding the tile's src
-  // asynchronously instead of synchronously. crossOrigin/alt/role
-  // attributes are omitted since this app's tile layer never sets
-  // options.crossOrigin and this is a decorative background map, not
-  // meaningful content a screen reader needs to announce.
+  // asynchronously instead of synchronously. Uses stadiaTileUrl(coords.z,
+  // coords.x, coords.y) directly rather than this.getTileUrl(coords) --
+  // Leaflet's own template-based URL builder has no way to prefer a
+  // cached IndexedDB blob, so going through it here would bypass the
+  // whole point of this override. crossOrigin/alt/role attributes are
+  // omitted since this app's tile layer never sets options.crossOrigin
+  // (Stadia Maps' CORS headers make that unnecessary -- see
+  // stadiaTileUrl()'s doc comment) and this is a decorative background
+  // map, not meaningful content a screen reader needs to announce.
   const OfflineTileLayer = L.TileLayer.extend({
     createTile: function (coords, done) {
       const tile = document.createElement("img");
       L.DomEvent.on(tile, "load", L.Util.bind(this._tileOnLoad, this, done, tile));
       L.DomEvent.on(tile, "error", L.Util.bind(this._tileOnError, this, done, tile));
 
-      const url = this.getTileUrl(coords);
+      const url = stadiaTileUrl(coords.z, coords.x, coords.y);
       let objectUrl = null;
       // Released once the browser is done loading this tile (success or
       // error) -- Leaflet never reassigns a new src onto the same <img>,
@@ -2377,9 +2408,16 @@
       const map = L.map(mapEl, { attributionControl: true, zoomControl: true, minZoom: 4, maxZoom: 18 });
       tripMapInstance = map;
 
-      new OfflineTileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      // The URL template argument here is never actually consulted --
+      // createTile() above always builds the real URL via
+      // stadiaTileUrl(), not this.getTileUrl() -- but Leaflet's
+      // constructor still expects one, so it's kept as an accurate
+      // (if unused) description of the real URL shape.
+      new OfflineTileLayer("https://tiles.stadiamaps.com/tiles/" + STADIA_TILE_STYLE + "/{z}/{x}/{y}.png", {
         maxZoom: 18,
-        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors'
+        // Required by Stadia Maps' terms -- see stadiaTileUrl()'s doc
+        // comment.
+        attribution: '&copy; <a href="https://stadiamaps.com/" target="_blank" rel="noopener">Stadia Maps</a>, &copy; <a href="https://openmaptiles.org/" target="_blank" rel="noopener">OpenMapTiles</a> &copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors'
       }).addTo(map);
 
       // "Current Location" control -- stacks in the same top-left corner
@@ -3299,12 +3337,15 @@
       countCachedIdb
     ));
     offlineCard.appendChild(renderOfflineDataRow(
-      // Concurrency 1 (fully sequential), not 3 -- see downloadToIdb()'s
-      // doc comment on finalizeWithRealCheck() for why: at ~2,400 tiles,
-      // several concurrent IndexedDB writes in flight at once has not
-      // proven as reliable in practice as ticket downloads' lighter load.
-      "Map tiles (Sweden & Norway)", buildMapPrefetchUrls(), 1, MAP_PREFETCH_KEY, MAP_PREFETCH_VERSION,
-      (urls, concurrency, onProgress, onDone) => downloadToIdb(urls, concurrency, { crossOrigin: true }, onProgress, onDone),
+      // No crossOrigin option -- unlike tile.openstreetmap.org, Stadia
+      // Maps' tile responses include CORS headers (see stadiaTileUrl()'s
+      // doc comment), so a normal fetch() here gets a fully readable
+      // response (real res.ok/Content-Length), the same as a same-origin
+      // request. That also means no "no-cors"/opaque-response blindness,
+      // so full byte-size verification applies to tiles the same way it
+      // already does for tickets.
+      "Map tiles (Sweden & Norway)", buildMapPrefetchUrls(), 3, MAP_PREFETCH_KEY, MAP_PREFETCH_VERSION,
+      (urls, concurrency, onProgress, onDone) => downloadToIdb(urls, concurrency, null, onProgress, onDone),
       countCachedIdb
     ));
     const storageRow = renderStorageEstimateRow();
@@ -3580,11 +3621,15 @@
   // Together ~2,400 tiles / ~25-45MB as of the current lodging list --
   // deliberately still bounded to the actual trip region across its
   // practical zoom range, not "all of Scandinavia at every zoom level."
-  // v3: map tiles moved from Cache Storage to IndexedDB (downloadToIdb()),
-  // the same fix that resolved unreliable ticket downloads -- see its doc
-  // comment. Bumped so an existing "done" flag (possibly set under the
-  // old, less reliable mechanism) doesn't suppress a real retry here.
-  const MAP_PREFETCH_VERSION = "v3"; // bump to force a re-run (e.g. if lodging locations change, or this coverage is widened further)
+  // v5: tile source switched from tile.openstreetmap.org to Stadia Maps
+  // (see stadiaTileUrl()'s doc comment for the full story -- repeated
+  // live bulk-download attempts against OSM's volunteer-run server were
+  // rate-limited/blocked, and a subsequent attempt to vendor tiles as
+  // static files turned out to have silently downloaded OSM's "Access
+  // Blocked" warning image for the entire run, since caught and
+  // reverted). Bumped so an existing "done" flag from any earlier
+  // mechanism doesn't suppress a real run under this one.
+  const MAP_PREFETCH_VERSION = "v5"; // bump to force a re-run (e.g. if lodging locations change, or this coverage is widened further)
   const MAP_PREFETCH_KEY = "rougeux_map_tiles_prefetched";
   const MAP_PREFETCH_OVERVIEW_ZOOMS = [4, 5, 6, 7, 8, 9];
   const MAP_PREFETCH_CITY_VIEWPORT_ZOOMS = [9, 10, 11, 12, 13, 14, 15, 16, 17];
@@ -3614,7 +3659,7 @@
       for (let ty = tyStart; ty <= tyEnd; ty++) {
         if (ty < 0 || ty >= n) continue;
         const wrappedX = ((tx % n) + n) % n;
-        urls.push(`https://tile.openstreetmap.org/${zoom}/${wrappedX}/${ty}.png`);
+        urls.push(stadiaTileUrl(zoom, wrappedX, ty));
       }
     }
     return urls;
@@ -3687,16 +3732,20 @@
   // request settles; onDone(succeeded, total) fires once every request
   // has (whether that one succeeded, failed, or hit the timeout).
   //
-  // opts.crossOrigin (map tiles only) requests the response in "no-cors"
-  // mode, required for a cross-origin request (tile.openstreetmap.org)
-  // that doesn't send CORS headers -- fetch() in its default "cors" mode
-  // would otherwise reject outright rather than resolving. The resulting
-  // "opaque" response can't have its status/headers read by the page even
-  // on success, but its body can still be read via .blob() and stored --
-  // that's the entire point of caching an opaque response at all. Since
-  // Content-Length isn't readable either, cross-origin entries are only
-  // verified by a non-zero blob size, not a size-vs-expected-length
-  // comparison the way same-origin ticket files are.
+  // opts.crossOrigin requests the response in "no-cors" mode, required
+  // for a cross-origin request to a server that doesn't send CORS
+  // headers -- fetch() in its default "cors" mode would otherwise reject
+  // outright rather than resolving. Not currently exercised by anything
+  // in this app: tickets are same-origin, and map tiles come from Stadia
+  // Maps (see stadiaTileUrl()'s doc comment), which *does* send CORS
+  // headers, so a normal "cors" request works fine there too. Kept for
+  // any future cross-origin source that doesn't support CORS -- for such
+  // a source, the resulting "opaque" response can't have its status/
+  // headers read by the page even on success, but its body can still be
+  // read via .blob() and stored (that's the entire point of caching an
+  // opaque response at all); since Content-Length isn't readable either,
+  // an opaque entry can only be verified by a non-zero blob size, not a
+  // size-vs-expected-length comparison the way a normal response is.
   function downloadToIdb(urls, concurrency, opts, onProgress, onDone) {
     if (!urls.length) { onDone(0, 0); return; }
     // Defensive/uniform check (silent prefetches already checked this
@@ -3724,22 +3773,17 @@
       crossOrigin ? { mode: "no-cors" } : null
     );
     const total = urls.length;
-    // tile.openstreetmap.org's usage policy asks for no more than ~2
-    // requests/second and explicitly discourages bulk downloading --
-    // reducing concurrency to 1 (see the Checklist row/prefetchMapTiles()
-    // call sites) wasn't itself enough to respect that, since with no
-    // delay between requests, one settling and immediately starting the
-    // next can still fire well over 2/second on a fast connection. A
-    // rate-limited/blocked response can still *resolve* (rather than
-    // reject) as a non-empty opaque response -- passing the non-zero-
-    // blob-size check below even though it's a block page, not a real
-    // tile -- which is a plausible explanation for a run that visually
-    // reaches 100% (every attempt still "settles") while almost nothing
-    // real ends up persisted, identically on any browser, since this
-    // would be a server policy response rather than a storage bug at
-    // all. This delay only applies to cross-origin (tile) requests --
-    // same-origin ticket requests have no third-party rate limit to
-    // respect.
+    // A minimum delay for cross-origin requests, not currently exercised
+    // by anything in this app (see opts.crossOrigin's doc comment above)
+    // -- kept for any future source with a stated rate limit like "no
+    // more than ~2 requests/second" (this app hit exactly that with a
+    // previous tile source; a rate-limited/blocked response can still
+    // *resolve*, rather than reject, as a non-empty opaque response,
+    // passing the non-zero-blob-size check below even though it's a
+    // block page rather than real content -- see CLAUDE.md's "Offline
+    // map tile downloads" notes for the full story of how that surfaced).
+    // Same-origin (or CORS-verifiable cross-origin, like the current
+    // Stadia Maps tile source) requests have no need for this.
     const minDelayMs = crossOrigin ? 600 : 0;
 
     // A per-tile idbKeyval.get() re-read immediately after idbKeyval.set()
@@ -3920,21 +3964,17 @@
     });
   }
 
-  // Best-effort, low-priority background fetch: tile requests run fully
-  // sequentially, concurrency 1 (not higher) for two independent reasons
-  // -- politer to the tile server than firing many at once (tile.
-  // openstreetmap.org's usage policy actively rate-limits/blocks bulk-
-  // looking request patterns; a rate-limited response still resolves
-  // rather than rejecting, though downloadToIdb()'s non-zero-blob-size
-  // check now catches an empty one), and, more importantly, several
-  // concurrent IndexedDB writes in flight at once has not proven as
-  // reliable in practice at this scale (~2,400 tiles) as it has for
-  // ticket downloads' much lighter load -- see downloadToIdb()'s
-  // finalizeWithRealCheck() doc comment. The prefetch is only marked
-  // "done" in localStorage once the final real-state check (not just
-  // in-loop optimism) confirms every tile actually landed -- so an
-  // interrupted first run (e.g. the tab closed early) retries in full
-  // next time instead of silently staying incomplete forever.
+  // Best-effort, low-priority background fetch of every tile the trip
+  // needs, from Stadia Maps (see stadiaTileUrl()'s doc comment) -- their
+  // CORS headers mean this gets full res.ok/Content-Length verification
+  // the same as a same-origin request, so concurrency 3 (matching ticket
+  // downloads) is fine here, no crossOrigin option or throttle needed.
+  // The prefetch is only marked "done" in localStorage once the final
+  // real-state check (not just in-loop optimism -- see downloadToIdb()'s
+  // finalizeWithRealCheck() doc comment) confirms every tile actually
+  // landed -- so an interrupted first run (e.g. the tab closed early)
+  // retries in full next time instead of silently staying incomplete
+  // forever.
   function prefetchMapTiles() {
     if (navigator.onLine === false) return;
     try {
@@ -3945,7 +3985,7 @@
     // into a Checklist "Download" tap already in flight for map tiles,
     // instead of racing it -- see startDedupedDownload's doc comment.
     startDedupedDownload(MAP_PREFETCH_KEY, urls.length, (onProgress, onDone) => {
-      downloadToIdb(urls, 1, { crossOrigin: true }, onProgress, onDone);
+      downloadToIdb(urls, 3, null, onProgress, onDone);
     }, null, () => {
       try { localStorage.setItem(MAP_PREFETCH_KEY, MAP_PREFETCH_VERSION); } catch (e) {}
     });

@@ -627,6 +627,41 @@ still dependency-free vanilla JS.
   cached bulk use, e.g. via a free-tier API key) rather than repeating
   the same request pattern against the same server that's already shown
   it will silently substitute fake content rather than reject outright.
+- Acted on that advice: the tile source is now **Stadia Maps**
+  (`stadiaTileUrl(z, x, y)`, near `MAP_TILE_SIZE` at the top of the
+  "Map (static tile rendering)" section), not `tile.openstreetmap.org`,
+  used by every tile consumer in the app (`drawStaticMap()`,
+  `OfflineTileLayer.createTile()`, `tileUrlsForRange()`/
+  `buildMapPrefetchUrls()`). Chosen after actually reading (not assuming)
+  both candidate providers' terms of service: MapTiler's free tier
+  explicitly *prohibits* bulk downloading/export for offline use (same
+  restriction that broke the OSM approach), while Stadia Maps' terms
+  explicitly permit personal/non-commercial use (exactly what this app
+  is) with offline caching up to 100MB/device as a general term, not
+  gated behind a paid plan -- comfortably above this app's actual tile
+  set. `STADIA_API_KEY` is a free-tier key (no credit card required to
+  obtain one), meant to be embedded in client-side code exactly this way
+  per Stadia's own docs -- it's a rate-limited/quota-tracked identifier,
+  not a secret, the same pattern as a client-side Google Maps key.
+  Critically, Stadia's tile responses include CORS headers
+  (`Access-Control-Allow-Origin: *`, confirmed directly via `curl`) --
+  unlike a raw `tile.openstreetmap.org` request, `downloadToIdb()` no
+  longer needs `opts.crossOrigin`/`"no-cors"` mode for tiles at all, so
+  `res.ok`/`Content-Length` are fully readable the same as a same-origin
+  request, closing off the entire "opaque response, can't verify content"
+  blindness that let OSM's blocked-warning image slip through undetected
+  in the first place. Both Checklist-row/`prefetchMapTiles()` call sites
+  dropped `{ crossOrigin: true }` in favor of `null` (matching how ticket
+  downloads are called) and concurrency went back up to `3`, with no
+  artificial throttle. Verified this thoroughly before trusting it with a
+  full run, learning directly from the OSM incident: fetched tiles across
+  a range of zoom levels/coordinates and confirmed every single one had a
+  **distinct** MD5 hash (not a repeat), confirmed two tiles that
+  *did* legitimately share a hash were both genuinely solid-color/blank
+  areas (verified via actual pixel inspection, not assumed), and ran a
+  30-tile concurrency-3 burst (matching the app's real download pattern)
+  with zero errors and full content variety before considering the
+  source trustworthy. `MAP_PREFETCH_VERSION` bumped to `"v5"`.
 
 ## Data shape
 
