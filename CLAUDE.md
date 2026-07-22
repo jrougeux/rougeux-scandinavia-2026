@@ -1011,6 +1011,28 @@ Defined as CSS custom properties in `styles.css` (`:root`):
   reopened after the map is torn down and rebuilt, since `render()` fully
   wipes and recreates the DOM (and the Leaflet instance) on every
   navigation -- see `trackMarker()` / `teardownTripMap()`.
+- Every marker gets an explicit `zIndexOffset` (`tripMapZIndexOffset(kind)`
+  in `renderTripMapView()`), overriding Leaflet's own default marker
+  z-index, which is based purely on each marker's *current on-screen
+  pixel Y position* (`leaflet.js`'s `Marker._setPos`:
+  `this._zIndex = t.y + this.options.zIndexOffset`, with `zIndexOffset`
+  defaulting to `0`). For two markers representing nearly the same real-
+  world spot -- e.g. a POI pin and an activity/dining pin both at/near
+  the same landmark, since POI pins are deliberately never deduped
+  against other pins (see above) -- their pixel Y positions are nearly
+  identical, so tiny sub-pixel rounding differences as the map zooms/pans
+  can flip which one computes a fractionally larger Y, visibly
+  "fluttering" which pin renders on top from one frame to the next.
+  `tripMapZIndexOffset()` assigns each marker a large, fixed tier value
+  (`TRIP_MAP_Z_TIER`, spaced `1000000` apart -- far more than any
+  realistic pixel-Y difference could ever overturn) plus a per-call
+  counter that breaks ties *within* a tier (e.g. two overlapping POIs)
+  the same deterministic way every time, so the relative stacking order
+  between any two markers is permanently decided the moment they're
+  created rather than by their transient screen position. Points of
+  interest sit in the lowest tier (supplementary background reading),
+  below the actual logistics pins (transport/activity/dining), with
+  lodging -- the biggest, most prominent icon -- always on top.
 - The trip map has a Google-Maps-style "Current Location" control
   (`LocationControl` in `renderTripMapView()`, a custom `L.Control`
   stacked in the same top-left corner as Leaflet's own zoom control) that

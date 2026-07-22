@@ -2463,6 +2463,35 @@
 
       const { cityPoints, detailPoints, hubPoints, poiPoints } = TRIP_MAP_POINTS;
 
+      // Leaflet's own default marker z-index is based purely on each
+      // marker's *current on-screen pixel Y position* (leaflet.js's
+      // Marker._setPos: `this._zIndex = t.y + this.options.zIndexOffset`,
+      // zIndexOffset defaulting to 0 everywhere unless set) -- for two
+      // markers representing nearly the same real-world spot (e.g. a POI
+      // pin and an activity/dining pin both at/near the same cathedral),
+      // their pixel Y positions are nearly identical, so tiny sub-pixel
+      // rounding differences as the map zooms/pans can flip which one
+      // computes a fractionally larger Y, visibly "fluttering" which pin
+      // renders on top from one frame to the next. tripMapZIndexOffset()
+      // assigns each marker a large, fixed, zoom/pan-independent
+      // zIndexOffset instead, so the relative stacking order between any
+      // two markers is permanently decided the moment they're created,
+      // never by their transient screen position. Spacing tiers 1e6 apart
+      // guarantees a tier difference can never be overturned by realistic
+      // pixel-Y differences (at most a few thousand); the per-call
+      // counter breaks ties *within* a tier (e.g. two overlapping POIs)
+      // the same deterministic way. Priority order (low to high, so later
+      // tiers render on top): points of interest are supplementary
+      // background reading, so they sit below the actual logistics pins
+      // (transport/activity/dining), with lodging -- the biggest, most
+      // prominent icon -- always on top of everything.
+      let tripMapZCounter = 0;
+      const TRIP_MAP_Z_TIER = { poi: 0, transport: 1, activity: 2, dining: 2, "dining-suggested": 2, lodging: 3 };
+      function tripMapZIndexOffset(kind) {
+        const tier = TRIP_MAP_Z_TIER[kind];
+        return (tier == null ? 2 : tier) * 1000000 + tripMapZCounter++;
+      }
+
       // Track every marker by its stable key so a saved popup can be
       // reopened after a rebuild, and so we know which pin's popup is
       // currently open (for teardownTripMap() to save when leaving).
@@ -2479,7 +2508,7 @@
 
       const cityLayer = L.layerGroup();
       cityPoints.forEach((p) => {
-        const marker = L.marker([p.lat, p.lon], { icon: makeTripMapIcon("lodging", 30) });
+        const marker = L.marker([p.lat, p.lon], { icon: makeTripMapIcon("lodging", 30), zIndexOffset: tripMapZIndexOffset("lodging") });
         const popupEl = document.createElement("div");
         popupEl.className = "trip-map-popup";
         popupEl.innerHTML = `
@@ -2514,7 +2543,7 @@
 
       const detailLayer = L.layerGroup();
       detailPoints.forEach((p) => {
-        const marker = L.marker([p.lat, p.lon], { icon: makeTripMapIcon(p.kind, 16) });
+        const marker = L.marker([p.lat, p.lon], { icon: makeTripMapIcon(p.kind, 16), zIndexOffset: tripMapZIndexOffset(p.kind) });
         const popupEl = document.createElement("div");
         popupEl.className = "trip-map-popup";
         popupEl.innerHTML = `
@@ -2535,7 +2564,7 @@
 
       const hubLayer = L.layerGroup();
       hubPoints.forEach((p) => {
-        const marker = L.marker([p.lat, p.lon], { icon: makeTripMapIcon(p.kind, p.kind === "activity" ? 16 : 14) });
+        const marker = L.marker([p.lat, p.lon], { icon: makeTripMapIcon(p.kind, p.kind === "activity" ? 16 : 14), zIndexOffset: tripMapZIndexOffset(p.kind) });
         const popupEl = document.createElement("div");
         popupEl.className = "trip-map-popup";
         const title = document.createElement("div");
@@ -2550,7 +2579,7 @@
 
       const poiLayer = L.layerGroup();
       poiPoints.forEach((p) => {
-        const marker = L.marker([p.lat, p.lon], { icon: makeTripMapIcon("poi", 16) });
+        const marker = L.marker([p.lat, p.lon], { icon: makeTripMapIcon("poi", 16), zIndexOffset: tripMapZIndexOffset("poi") });
         const popupEl = document.createElement("div");
         popupEl.className = "trip-map-popup";
         const title = document.createElement("div");
