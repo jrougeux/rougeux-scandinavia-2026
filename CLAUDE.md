@@ -105,6 +105,23 @@ still dependency-free vanilla JS.
 - `favicon.ico` — see `icons/` above; referenced via `<link rel="icon">`
   in `index.html` alongside `icons/favicon-32.png` for browsers that
   prefer a PNG favicon
+- `index.html`'s Open Graph tags (`og:title`/`og:description`/`og:image`/
+  `og:url`) make a link to this app shared via iMessage/text show the
+  same split Sweden/Norway flag icon as the home-screen icon
+  (`icons/icon-192.png`, via `apple-touch-icon`), rather than some
+  inconsistent per-platform fallback — without them, a link preview has
+  no explicit instruction on what image to show at all. `og:image`
+  deliberately points at `icons/icon-512.png`, not `icon-192.png` — same
+  icon design, just the higher-resolution source, which preview crawlers
+  generally prefer to scale down from rather than a smaller source
+  image. `og:image` (and `og:url`) are hardcoded as **full, absolute**
+  URLs to the deployed GitHub Pages site
+  (`https://jrougeux.github.io/rougeux-scandinavia-2026/...`) — Open
+  Graph images specifically aren't reliably resolved from a relative
+  path by every messaging app's link-preview crawler, unlike most of
+  this app's other same-origin-relative asset references. If this app
+  is ever redeployed to a different domain, these two tags need updating
+  to match, or link previews will silently point at a dead/wrong URL.
 - `manifest.json`'s `background_color`/`theme_color` must match the
   app's actual palette (`--bg` `#f6f4ee` / accent `#35576b`, same as
   `index.html`'s `<meta name="theme-color">`) — `background_color`
