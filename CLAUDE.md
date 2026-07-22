@@ -735,6 +735,29 @@ still dependency-free vanilla JS.
   output) -- only makes it possible to tell the difference between "the
   browser's estimate is just imprecise" (both numbers roughly agree) and
   "something is actually missing" (they don't) without guessing.
+- The wider zoom 15-18 coverage above still left the *very* highest zoom
+  blank -- `MAP_PREFETCH_CITY_VIEWPORT_ZOOMS`/`MAP_PREFETCH_SECONDARY_ZOOMS`
+  topped out at 17, but the trip-wide Leaflet map's own `maxZoom` (see
+  `renderTripMapView()`) is 18 -- so pinch-zooming or tapping "+" all the
+  way in on that map reached a zoom level nothing had ever prefetched.
+  Verified Stadia's `osm_bright` genuinely has real, distinct tile
+  content all the way to its documented native max of zoom 20 (`curl`-
+  fetched real, varied tiles at 18/19/20 for multiple lodging locations)
+  before deciding how far to extend -- going all the way to 20 for every
+  point (not just the 6 lodging ones) was considered and rejected: it
+  would triple the total tile count to ~11,000 (uncomfortably close to
+  Stadia's 100MB/device allowance), and covering only 17 and 20 while
+  skipping 18-19 would mean Leaflet's own step-by-step zoom controls
+  (`zoomDelta`/`zoomSnap`, both default `1`) hit a visible blank flash at
+  the skipped intermediate levels before real content reappeared at 20.
+  Both `MAP_PREFETCH_CITY_VIEWPORT_ZOOMS` and `MAP_PREFETCH_SECONDARY_ZOOMS`
+  were instead extended by exactly one level, to 18 -- matching the
+  Leaflet map's actual ceiling exactly, so every step of a normal zoom
+  gesture is covered with no gap, for a modest, safe increase (~6,600
+  tiles total, up from ~4,800). `MAP_MAX_ZOOM` (the separate constant the
+  per-day canvas map's own +/- buttons and pinch-zoom clamp to) was
+  bumped from 17 to 18 too, kept in sync for the same reason.
+  `MAP_PREFETCH_VERSION` bumped to `"v7"`.
 
 ## Data shape
 

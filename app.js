@@ -318,7 +318,12 @@
   // ---------------- Map (static tile rendering) ----------------
   const MAP_TILE_SIZE = 256;
   const MAP_MIN_ZOOM = 6;
-  const MAP_MAX_ZOOM = 17;
+  // Matches the trip-wide Leaflet map's own maxZoom (see
+  // renderTripMapView()) and MAP_PREFETCH_CITY_VIEWPORT_ZOOMS/
+  // MAP_PREFETCH_SECONDARY_ZOOMS' own ceiling -- kept in sync so the
+  // per-day canvas map's own +/- buttons never let a user zoom in past
+  // what's actually been prefetched for offline use.
+  const MAP_MAX_ZOOM = 18;
   const MAP_DEFAULT_ZOOM = 14;
   const MAP_CANVAS_W = 640;
   const MAP_CANVAS_H = 320;
@@ -3668,26 +3673,36 @@
   //    through past the per-day map's own default zoom, i.e. the entire
   //    range a user would naturally pass through zooming from "see the
   //    whole trip" in to "see this street."
-  // Together ~2,400 tiles / ~25-45MB as of the current lodging list --
-  // deliberately still bounded to the actual trip region across its
-  // practical zoom range, not "all of Scandinavia at every zoom level."
-  // v6: switched Stadia Maps style from "alidade_smooth" (deliberately
-  // minimalist, no POI/business labels) to "osm_bright" (see
-  // STADIA_TILE_STYLE's doc comment), and added the secondary-point
-  // prefetch above (uniqueSecondaryPoints()) to cover the highest zoom
-  // levels around every activity/dining/hub/POI, not just lodging.
-  // Bumped so an existing "done" flag from the old style/scope doesn't
-  // suppress a real run under this one.
-  const MAP_PREFETCH_VERSION = "v6"; // bump to force a re-run (e.g. if lodging locations change, or this coverage is widened further)
+  // Together ~4,800 tiles as of the current lodging list -- deliberately
+  // still bounded to the actual trip region across its practical zoom
+  // range, not "all of Scandinavia at every zoom level."
+  // v7: both zoom ranges extended by one level, from 17 up through 18 --
+  // 18 is also the trip-wide Leaflet map's own maxZoom (see
+  // renderTripMapView()), so a user pinch-zooming or tapping "+" all the
+  // way in was reaching a zoom level nothing had ever prefetched, which
+  // is what surfaced as "no data at the maximum zoom level." Deliberately
+  // *not* jumping straight to Stadia's true native max of zoom 20 here --
+  // that was considered (verified real, distinct tile content exists all
+  // the way to 20) but rejected: Leaflet's zoom controls step one level
+  // at a time, so covering only 17 and 20 while skipping 18-19 would mean
+  // the map goes visibly blank at those intermediate steps before
+  // reappearing at 20, and covering *every* level up to 20 for all
+  // secondary points nearly triples the total tile count, uncomfortably
+  // close to Stadia's 100MB/device offline-caching allowance. One more
+  // level (18) for both the lodging and secondary layers keeps every
+  // step of a normal zoom gesture covered without either problem.
+  // Bumped so an existing "done" flag from the old, narrower range
+  // doesn't suppress a real run under this one.
+  const MAP_PREFETCH_VERSION = "v7"; // bump to force a re-run (e.g. if lodging locations change, or this coverage is widened further)
   const MAP_PREFETCH_KEY = "rougeux_map_tiles_prefetched";
   const MAP_PREFETCH_OVERVIEW_ZOOMS = [4, 5, 6, 7, 8, 9];
-  const MAP_PREFETCH_CITY_VIEWPORT_ZOOMS = [9, 10, 11, 12, 13, 14, 15, 16, 17];
+  const MAP_PREFETCH_CITY_VIEWPORT_ZOOMS = [9, 10, 11, 12, 13, 14, 15, 16, 17, 18];
   // Bigger than the 640x320 per-day map canvas -- the trip-wide Leaflet
   // map's "fly into this city" view (see TRIP_MAP_DETAIL_MIN_ZOOM) can
   // fill a full-screen viewport, so this covers that too, not just the
   // per-day map card.
   const MAP_PREFETCH_CITY_VIEWPORT = 900;
-  // A user zoomed all the way in (15-17) is most likely looking at
+  // A user zoomed all the way in (15-18) is most likely looking at
   // something *specific* -- a restaurant, a landmark, a station -- not
   // idly panning around the general vicinity of their lodging the way
   // MAP_PREFETCH_CITY_VIEWPORT's much larger 900px radius assumes. Real-
@@ -3703,7 +3718,7 @@
   // Set-based deduplication (folded together with the lodging prefetch's
   // tiles in buildMapPrefetchUrls() below) means overlapping coverage
   // near a lodging point costs nothing extra.
-  const MAP_PREFETCH_SECONDARY_ZOOMS = [15, 16, 17];
+  const MAP_PREFETCH_SECONDARY_ZOOMS = [15, 16, 17, 18];
   const MAP_PREFETCH_SECONDARY_VIEWPORT = 400;
 
   function uniqueLodgingPoints() {
