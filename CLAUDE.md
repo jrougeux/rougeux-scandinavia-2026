@@ -1050,6 +1050,45 @@ Defined as CSS custom properties in `styles.css` (`:root`):
   interest sit in the lowest tier (supplementary background reading),
   below the actual logistics pins (transport/activity/dining), with
   lodging -- the biggest, most prominent icon -- always on top.
+- The z-index fix above makes stacking order *deterministic* but doesn't
+  stop pins from visually overlapping in the first place -- a user report
+  (a purple activity pin and a red/pink dining-suggested pin both sitting
+  on the exact same Gamla Stan square, after a hub pin was deliberately
+  relocated there) showed that two pins close enough together are only
+  *one* of them clickable at all, regardless of which renders on top.
+  `spreadOverlaps(points, thresholdMeters, nudgeMeters)` in
+  `buildTripMapPoints()` (right before its final `return`) runs once over
+  every final pin from every source table combined -- lodging, activity/
+  dining legs, transport/walking hubs, and POIs together, since the
+  overlap that prompted this was a hub pin vs. a dining pin, and a POI-vs-
+  POI duplicate turned up in the same pass (e.g. "Gudvangen" and
+  "Njardarheimr Viking Village" geocoded to the identical coordinate).
+  Groups every pair of pins within `thresholdMeters` (25m -- chosen to
+  catch everything from exact 0m duplicates up through the closest
+  legitimately-separate pairs already in this trip's data, e.g. the
+  Storkyrkan Cathedral POI vs. its nearby activity-leg pin at ~19m) into a
+  cluster via union-find (so a chain of 3+ mutually-close pins, e.g. the
+  Flåm hub / the "Flåm" POI / the Flåmsbana POI, all end up in one
+  cluster rather than pairwise-nudged into each other), then spreads every
+  pin in a cluster outward from the cluster's shared centroid by
+  `nudgeMeters` (12m) at evenly-spaced angles -- two pins land 24m apart,
+  three land ~21m apart from each other, etc. -- enough separation to be
+  independently clickable at any normal zoom level while each pin stays
+  visually anchored to the same real spot. Cluster members are sorted by
+  their own stable `key` before assigning angles, not left in whatever
+  order they were built in, so which pin lands at which angle doesn't
+  shuffle across re-renders. This intentionally does not touch or replace
+  the *intentional* same-spot merges earlier in `buildTripMapPoints()`
+  (e.g. a transport hub reusing a lodging's exact coordinates becomes one
+  merged point, not two pins) -- those still collapse to a single point
+  before this pass ever runs, so there's nothing left for it to spread
+  apart. Because `legPinIndex`/`diningPinByAddress`/`poiPinById` were
+  already populated earlier in the function with each referenced point's
+  *pre-nudge* coordinates (copied by value, not by reference), all three
+  are resynced immediately after `spreadOverlaps()` runs -- via a
+  `pointsByKey` lookup keyed by each point's own stable `key` -- so a
+  "Map view" link still flies to a pin's actual, possibly-nudged position
+  rather than a stale pre-nudge one.
 - The trip map has a Google-Maps-style "Current Location" control
   (`LocationControl` in `renderTripMapView()`, a custom `L.Control`
   stacked in the same top-left corner as Leaflet's own zoom control) that

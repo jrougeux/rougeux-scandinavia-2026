@@ -2317,6 +2317,97 @@
       poiPinById[p.id] = { key: p.key, lat: p.lat, lon: p.lon };
     });
 
+    // Some pins end up at, or within a few meters of, another pin from a
+    // totally different source table -- two separate-day legs that both
+    // land on the same airport, two dining candidates that share a meeting
+    // point, a POI describing the same square as another POI, or (the
+    // report that prompted this) a hub pin relocated to sit right next to
+    // an existing dining pin. These are legitimately different things, not
+    // a merge candidate (an *intentional* same-spot merge -- e.g. a
+    // transport hub reusing a lodging's exact coordinates -- is already
+    // handled above, before this point, by reusing the existing point
+    // outright rather than creating a second one) -- but stacked directly
+    // on top of each other on screen, only the topmost pin is actually
+    // clickable regardless of the z-index tiering above. spreadOverlaps()
+    // nudges every point in a cluster of near-duplicates outward from
+    // their shared centroid by a small, fixed real-world distance, each in
+    // a different direction, so every pin in the cluster keeps its own
+    // clickable position at any normal zoom level while staying visually
+    // anchored to the same real spot.
+    function metersToLatDelta(m) {
+      return m / 111320;
+    }
+    function metersToLonDelta(m, atLat) {
+      return m / (111320 * Math.cos((atLat * Math.PI) / 180));
+    }
+    function haversineMeters(lat1, lon1, lat2, lon2) {
+      const R = 6371000;
+      const p1 = (lat1 * Math.PI) / 180;
+      const p2 = (lat2 * Math.PI) / 180;
+      const dPhi = ((lat2 - lat1) * Math.PI) / 180;
+      const dLambda = ((lon2 - lon1) * Math.PI) / 180;
+      const a = Math.sin(dPhi / 2) ** 2 + Math.cos(p1) * Math.cos(p2) * Math.sin(dLambda / 2) ** 2;
+      return 2 * R * Math.asin(Math.sqrt(a));
+    }
+    function spreadOverlaps(points, thresholdMeters, nudgeMeters) {
+      const parent = points.map((_, i) => i);
+      function find(i) {
+        while (parent[i] !== i) {
+          parent[i] = parent[parent[i]];
+          i = parent[i];
+        }
+        return i;
+      }
+      for (let i = 0; i < points.length; i++) {
+        for (let j = i + 1; j < points.length; j++) {
+          if (haversineMeters(points[i].lat, points[i].lon, points[j].lat, points[j].lon) <= thresholdMeters) {
+            const ri = find(i);
+            const rj = find(j);
+            if (ri !== rj) parent[ri] = rj;
+          }
+        }
+      }
+      const clusters = {};
+      points.forEach((p, i) => {
+        const root = find(i);
+        (clusters[root] = clusters[root] || []).push(p);
+      });
+      Object.values(clusters).forEach((cluster) => {
+        if (cluster.length < 2) return;
+        // Stable order regardless of each point's build order, so a
+        // future re-render can't shuffle which point lands at which angle.
+        cluster.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+        const centerLat = cluster.reduce((s, p) => s + p.lat, 0) / cluster.length;
+        const centerLon = cluster.reduce((s, p) => s + p.lon, 0) / cluster.length;
+        cluster.forEach((p, i) => {
+          const angle = (2 * Math.PI * i) / cluster.length;
+          p.lat = centerLat + metersToLatDelta(nudgeMeters) * Math.cos(angle);
+          p.lon = centerLon + metersToLonDelta(nudgeMeters, centerLat) * Math.sin(angle);
+        });
+      });
+    }
+    const allPoints = [...cityPoints, ...detailPoints, ...hubPoints, ...poiPoints];
+    spreadOverlaps(allPoints, 25, 12);
+
+    // legPinIndex/diningPinByAddress/poiPinById were built from each
+    // referenced point's *pre-nudge* lat/lon (copied by value, not by
+    // reference), so a "Map view" link built from them would still fly to
+    // a marker's old, un-nudged position -- resync every entry against the
+    // same points' now-possibly-nudged coordinates.
+    const pointsByKey = {};
+    allPoints.forEach((p) => {
+      pointsByKey[p.key] = p;
+    });
+    [legPinIndex, diningPinByAddress, poiPinById].forEach((index) => {
+      Object.keys(index).forEach((k) => {
+        const p = pointsByKey[index[k].key];
+        if (p) {
+          index[k].lat = p.lat;
+          index[k].lon = p.lon;
+        }
+      });
+    });
+
     return { cityPoints, detailPoints, hubPoints, poiPoints, legPinIndex, diningPinByAddress, poiPinById };
   }
 
