@@ -123,20 +123,12 @@ still dependency-free vanilla JS.
 - `assets/idb-keyval/idb-keyval.js` — vendored `idb-keyval` 6.3.0 (Apache-2.0,
   by Jake Archibald), a small IndexedDB key-value wrapper, loaded in
   `index.html` before `data.js`/`app.js`, exposing `window.idbKeyval`.
-  Used for both ticket and map tile storage (`downloadToIdb()`/
-  `countCachedIdb()`/`renderTicketFileView()` in `app.js`) — see the
-  "Offline ticket downloads"/"Offline map tile downloads" notes below for
-  why both moved off Cache Storage entirely. Precached in `sw.js`'s
-  `ASSETS` list like every other vendored dependency, since the app can't
-  load it at all offline otherwise
-- `assets/map-tiles/{z}/{x}/{y}.png` — vendored OpenStreetMap tiles (1,909
-  files as of the current lodging list, zoom levels 4-15) fetched once,
-  respectfully, and checked into the repo as static files rather than
-  downloaded live from `tile.openstreetmap.org` at runtime — see the
-  "Offline map tile downloads" notes below (specifically the bullet on
-  `tileUrl()`) for the full reasoning and how the app decides between a
-  vendored local tile and a live fallback request. Zoom 16-17 aren't
-  vendored yet, deliberately left for a smaller follow-up pass
+  Used exclusively for ticket file storage (`downloadTicketsToIdb()`/
+  `countCachedTicketsIdb()`/`renderTicketFileView()` in `app.js`) — see
+  the "Offline ticket downloads" notes below for why tickets moved off
+  Cache Storage entirely. Precached in `sw.js`'s `ASSETS` list like every
+  other vendored dependency, since the app can't load it at all offline
+  otherwise
 - `assets/tickets/` — PDF/JPG train tickets, taxi receipts, tour vouchers,
   etc. Static site with no server, so there's no way to list this folder's
   contents at runtime — `TICKET_FILES` in `app.js` is a hand-maintained
@@ -600,76 +592,6 @@ still dependency-free vanilla JS.
   the tile server from this saga's many earlier bulk-download attempts
   that throttling correctly going forward doesn't immediately clear
   whatever cooldown/block period, if any, is already in effect.
-- The throttle above was a mitigation, not a fix -- confirmed by the user
-  reproducing the exact same "reaches 100%, then reports back near zero
-  real bytes stored" symptom again even at concurrency 1 with the 600ms
-  delay in place. The actual fix: this app's own repeated bulk-download
-  *attempts* were the real problem (`tile.openstreetmap.org`'s usage
-  policy explicitly discourages bulk downloading outright, and this app
-  had hit that server with a ~2,400-tile bulk-download attempt many times
-  over this saga), so the durable solution is to stop making live bulk
-  requests to that server at all for the coverage this app actually
-  needs. `assets/map-tiles/{z}/{x}/{y}.png` now vendors the tiles this
-  app needs as static files checked into the repo, fetched *once*
-  (respectfully, slowly, with a descriptive `User-Agent` identifying the
-  app and its one-time non-commercial purpose) rather than repeatedly at
-  runtime -- mirroring how `assets/leaflet/`/`assets/idb-keyval/` are
-  already vendored. Covers `MAP_PREFETCH_OVERVIEW_ZOOMS` (4-9, unchanged)
-  plus `MAP_PREFETCH_CITY_VIEWPORT_ZOOMS` narrowed from 9-17 to **9-15**
-  (1,909 tiles) -- the closest two zoom levels per city (16-17, ~475
-  more tiles) were deliberately left for a smaller follow-up vendoring
-  pass rather than growing this one further, since dropping just those
-  two zoom levels barely reduces total tile count on its own (each zoom
-  level contributes a roughly *constant* ~200-280 tiles at a fixed pixel
-  viewport, not a shrinking amount as you get closer to the leaves of the
-  range) -- shrinking the *viewport size* would have mattered far more
-  than trimming zoom levels, but the user opted to keep the full 900px
-  viewport and accept the larger one-time download instead.
-  `tileUrl(z, x, y)` (in the same section as `MAP_PREFETCH_OVERVIEW_ZOOMS`
-  etc.) is now the **single place** anywhere in the app that decides a
-  tile's actual request URL: `VENDORED_TILE_KEYS` (a `Set` of `"z/x/y"`
-  strings, computed once at module load via `buildVendoredTileKeys()`,
-  using the *exact same* zoom/viewport math as the vendored set itself,
-  so it can never drift out of sync) determines whether a given tile has
-  a local vendored copy (`assets/map-tiles/${z}/${x}/${y}.png`) or needs
-  a live `tile.openstreetmap.org` request. Every function that previously
-  built a `tile.openstreetmap.org` URL directly now goes through
-  `tileUrl()` instead: `drawStaticMap()` (the per-day canvas map),
-  `OfflineTileLayer.createTile()` (the trip-wide Leaflet map -- this is
-  why it no longer calls `this.getTileUrl(coords)`, since Leaflet's own
-  template-based URL builder has no way to prefer a vendored tile), and
-  `buildMapPrefetchUrls()` (the Checklist "Download" button's url list).
-  `tileUrlsForRange()`/`tileUrlsForViewport()`/`tileUrlsForBounds()` were
-  renamed to `tileKeys*()` and now emit `"z/x/y"` keys rather than URLs,
-  since the URL-vs-vendored decision needs to happen once, centrally, not
-  be duplicated into every caller.
-  Since `VENDORED_TILE_KEYS` is exactly what `buildMapPrefetchUrls()`
-  iterates, the Checklist "Download" button's map-tile row is now
-  **entirely same-origin** -- no `crossOrigin` option, no opaque-response
-  blindness, no rate limit to respect, so concurrency went back up to `3`
-  and the `600`ms throttle no longer applies to it (both are still
-  supported by `downloadToIdb()` for any future live cross-origin
-  download need, e.g. eventually vendoring zoom 16-17 the same way, just
-  not currently exercised by anything in this app). This also means real
-  `Content-Length`-vs-actual-size verification (previously only possible
-  for same-origin ticket files) now applies to map tiles too.
-  For any tile *not* in `VENDORED_TILE_KEYS` (zoom 16-17, or anywhere
-  outside the vendored bounding boxes/viewports if a user pans the
-  trip-wide map elsewhere while online), `tileUrl()` still falls back to
-  a live `tile.openstreetmap.org` request exactly as before -- normal,
-  single-user, human-paced browsing when online, not a bulk pattern, so
-  this remains policy-compliant; it just isn't available offline the way
-  the vendored zoom 4-15 coverage is.
-  `sw.js`'s `ASSETS` precache list deliberately does **not** include the
-  1,909 vendored tile files, for the same reason `assets/tickets/*` isn't
-  precached either (see above): hardcoding ~1,900 individual entries
-  would bloat/slow the service worker's install step, block it on every
-  one succeeding, and isn't necessary anyway since `downloadToIdb()`'s
-  existing bulk-download mechanism (now same-origin and fast) already
-  covers getting them into IndexedDB proactively.
-  `MAP_PREFETCH_VERSION` was bumped to `"v4"` so an existing "done" flag
-  from the old live-download mechanism doesn't suppress a real run under
-  this one.
 
 ## Data shape
 

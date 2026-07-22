@@ -380,7 +380,7 @@
       for (let ty = tyStart; ty <= tyEnd; ty++) {
         if (ty < 0 || ty >= n) continue;
         const wrappedX = ((tx % n) + n) % n;
-        tileSpecs.push({ url: tileUrl(zoom, wrappedX, ty), tx, ty });
+        tileSpecs.push({ url: `https://tile.openstreetmap.org/${zoom}/${wrappedX}/${ty}.png`, tx, ty });
       }
     }
 
@@ -2316,21 +2316,13 @@
   // attributes are omitted since this app's tile layer never sets
   // options.crossOrigin and this is a decorative background map, not
   // meaningful content a screen reader needs to announce.
-  //
-  // Uses tileUrl(coords.z, coords.x, coords.y) (defined further down,
-  // hoisted) instead of this.getTileUrl(coords) -- Leaflet's own
-  // template-based URL builder always points at tile.openstreetmap.org,
-  // with no way to prefer a vendored local tile. tileUrl() is the one
-  // place that decides vendored-local vs. live-OSM for any tile,
-  // everywhere in the app; going through Leaflet's own URL builder here
-  // would bypass that entirely for the trip-wide map specifically.
   const OfflineTileLayer = L.TileLayer.extend({
     createTile: function (coords, done) {
       const tile = document.createElement("img");
       L.DomEvent.on(tile, "load", L.Util.bind(this._tileOnLoad, this, done, tile));
       L.DomEvent.on(tile, "error", L.Util.bind(this._tileOnError, this, done, tile));
 
-      const url = tileUrl(coords.z, coords.x, coords.y);
+      const url = this.getTileUrl(coords);
       let objectUrl = null;
       // Released once the browser is done loading this tile (success or
       // error) -- Leaflet never reassigns a new src onto the same <img>,
@@ -3307,13 +3299,12 @@
       countCachedIdb
     ));
     offlineCard.appendChild(renderOfflineDataRow(
-      // buildMapPrefetchUrls() now returns entirely same-origin, vendored
-      // local paths (see tileUrl()'s doc comment) -- no crossOrigin
-      // option needed here anymore, and none of the cross-origin/rate-
-      // limit concerns that motivated concurrency 1 + a 600ms throttle
-      // apply to fetching this app's own static files.
-      "Map tiles (Sweden & Norway)", buildMapPrefetchUrls(), 3, MAP_PREFETCH_KEY, MAP_PREFETCH_VERSION,
-      (urls, concurrency, onProgress, onDone) => downloadToIdb(urls, concurrency, null, onProgress, onDone),
+      // Concurrency 1 (fully sequential), not 3 -- see downloadToIdb()'s
+      // doc comment on finalizeWithRealCheck() for why: at ~2,400 tiles,
+      // several concurrent IndexedDB writes in flight at once has not
+      // proven as reliable in practice as ticket downloads' lighter load.
+      "Map tiles (Sweden & Norway)", buildMapPrefetchUrls(), 1, MAP_PREFETCH_KEY, MAP_PREFETCH_VERSION,
+      (urls, concurrency, onProgress, onDone) => downloadToIdb(urls, concurrency, { crossOrigin: true }, onProgress, onDone),
       countCachedIdb
     ));
     const storageRow = renderStorageEstimateRow();
@@ -3561,55 +3552,42 @@
     updateBottomNav();
   }
 
-  // ---------------- Map tiles: vendored (offline-guaranteed) vs. live OSM ----------------
-  // tile.openstreetmap.org's usage policy asks for no more than ~2
-  // requests/second and explicitly discourages bulk downloading -- which
-  // is exactly what a "prefetch ahead of time" feature inherently is, and
-  // which this app's repeated bulk-prefetch attempts (throttled or not)
-  // kept running into in various failure modes documented above. The
-  // actual fix: rather than trying to make a *repeated* live bulk
-  // download reliable and policy-compliant at the same time, the tiles
-  // this app actually needs (the trip's overview bounding box, plus a
-  // viewport around each lodging city, up through zoom 15) are fetched
-  // *once*, checked into this repo as static files under
-  // `assets/map-tiles/{z}/{x}/{y}.png` (mirroring how Leaflet/idb-keyval
-  // are vendored), and served from this app's own origin from then on --
-  // no live request to tile.openstreetmap.org, no rate limit, no CORS/
-  // opaque-response blindness, for any of that coverage. tileUrl(z, x, y)
-  // below is the single place that decides, for a given tile, whether a
-  // vendored local copy exists (VENDORED_TILE_KEYS, computed from the
-  // exact same zoom/viewport math used to build that vendored set) or
-  // whether to fall back to a live tile.openstreetmap.org request --
-  // every other function that needs a tile URL goes through this one
-  // function rather than constructing a tile.openstreetmap.org URL
-  // directly, so there's exactly one place this logic lives.
+  // ---------------- Map tile prefetch (offline-ready without browsing first) ----------------
+  // Opportunistic per-tile caching (see sw.js's fetch handler, which still
+  // covers tiles fetched by ordinary map-panning into Cache Storage) only
+  // saves a tile once a user has actually scrolled it into view -- fine
+  // for casual browsing, but means the map goes blank in airplane mode
+  // anywhere not already visited. This proactively fetches (and, via
+  // downloadToIdb(), stores into IndexedDB -- see its doc comment for why
+  // tiles are on IndexedDB rather than Cache Storage) tiles for the views
+  // a user hits without any panning.
   //
-  // Zoom 16-17 for each city aren't vendored yet (they're the two
-  // closest-in zoom levels -- deliberately left as a smaller follow-up
-  // vendoring pass later, rather than growing this one commit further).
-  // Until then, a user zooming in that far still gets a live
-  // tile.openstreetmap.org request -- normal single-user browsing at
-  // normal pace when online, not a bulk pattern, so this remains policy-
-  // compliant; it just isn't available offline yet the way zoom 4-15 is.
-  //
-  // MAP_PREFETCH_OVERVIEW_ZOOMS covers the *whole trip's* bounding box,
-  // at zoom levels low enough that one fetch covers every city at once
-  // cheaply (tile count roughly doubles per zoom level here, and
-  // explodes well before city-block detail, so this only goes up to zoom
-  // 9 -- beyond that the per-city viewport approach below is far cheaper
-  // for the same detail level). MAP_PREFETCH_CITY_VIEWPORT_ZOOMS covers
-  // each lodging city individually at a *fixed pixel viewport* (not a
-  // growing geographic bounds), so tile count stays roughly constant per
-  // zoom level regardless of how far zoomed in.
-  // v4: tiles now vendored as static files rather than downloaded live
-  // from tile.openstreetmap.org at all (city zoom range also narrowed
-  // from 9-17 to 9-15 to match what's actually vendored -- see above).
-  // Bumped so an existing "done" flag from the old live-download
-  // mechanism doesn't suppress a real run under this one.
-  const MAP_PREFETCH_VERSION = "v4"; // bump to force a re-run (e.g. if lodging locations change, or this coverage is widened further)
+  // Covers two zoom ranges, stitched together so there's no gap a normal
+  // zoom gesture could land in and hit blank tiles:
+  //  - MAP_PREFETCH_OVERVIEW_ZOOMS: the *whole trip's* bounding box, at
+  //    zoom levels low enough that one fetch covers every city at once
+  //    cheaply (tile count roughly doubles per zoom level here, and
+  //    explodes well before city-block detail, so this only goes up to
+  //    zoom 9 -- beyond that the per-city viewport approach below is far
+  //    cheaper for the same detail level).
+  //  - MAP_PREFETCH_CITY_VIEWPORT_ZOOMS: each lodging city individually,
+  //    at a *fixed pixel viewport* (not a growing geographic bounds), so
+  //    tile count stays roughly constant per zoom level regardless of
+  //    how far zoomed in -- covers from where the overview leaves off up
+  //    through past the per-day map's own default zoom, i.e. the entire
+  //    range a user would naturally pass through zooming from "see the
+  //    whole trip" in to "see this street."
+  // Together ~2,400 tiles / ~25-45MB as of the current lodging list --
+  // deliberately still bounded to the actual trip region across its
+  // practical zoom range, not "all of Scandinavia at every zoom level."
+  // v3: map tiles moved from Cache Storage to IndexedDB (downloadToIdb()),
+  // the same fix that resolved unreliable ticket downloads -- see its doc
+  // comment. Bumped so an existing "done" flag (possibly set under the
+  // old, less reliable mechanism) doesn't suppress a real retry here.
+  const MAP_PREFETCH_VERSION = "v3"; // bump to force a re-run (e.g. if lodging locations change, or this coverage is widened further)
   const MAP_PREFETCH_KEY = "rougeux_map_tiles_prefetched";
   const MAP_PREFETCH_OVERVIEW_ZOOMS = [4, 5, 6, 7, 8, 9];
-  const MAP_PREFETCH_CITY_VIEWPORT_ZOOMS = [9, 10, 11, 12, 13, 14, 15];
+  const MAP_PREFETCH_CITY_VIEWPORT_ZOOMS = [9, 10, 11, 12, 13, 14, 15, 16, 17];
   // Bigger than the 640x320 per-day map canvas -- the trip-wide Leaflet
   // map's "fly into this city" view (see TRIP_MAP_DETAIL_MIN_ZOOM) can
   // fill a full-screen viewport, so this covers that too, not just the
@@ -3629,26 +3607,23 @@
     return points;
   }
 
-  // Emits "z/x/y" keys, not URLs -- tileUrl() below is the only place a
-  // key becomes an actual request URL (vendored local path or live OSM
-  // fallback), so every tile-area helper here works in terms of keys.
-  function tileKeysForRange(zoom, txStart, txEnd, tyStart, tyEnd) {
+  function tileUrlsForRange(zoom, txStart, txEnd, tyStart, tyEnd) {
     const n = Math.pow(2, zoom);
-    const keys = [];
+    const urls = [];
     for (let tx = txStart; tx <= txEnd; tx++) {
       for (let ty = tyStart; ty <= tyEnd; ty++) {
         if (ty < 0 || ty >= n) continue;
         const wrappedX = ((tx % n) + n) % n;
-        keys.push(`${zoom}/${wrappedX}/${ty}`);
+        urls.push(`https://tile.openstreetmap.org/${zoom}/${wrappedX}/${ty}.png`);
       }
     }
-    return keys;
+    return urls;
   }
 
-  function tileKeysForViewport(lat, lon, zoom, pxSize, bufferTiles) {
+  function tileUrlsForViewport(lat, lon, zoom, pxSize, bufferTiles) {
     const center = lonLatToTilePixel(lat, lon, zoom);
     const half = pxSize / 2;
-    return tileKeysForRange(
+    return tileUrlsForRange(
       zoom,
       Math.floor((center.x - half) / MAP_TILE_SIZE) - bufferTiles,
       Math.floor((center.x + half) / MAP_TILE_SIZE) + bufferTiles,
@@ -3657,9 +3632,9 @@
     );
   }
 
-  function tileKeysForBounds(points, zoom, bufferTiles) {
+  function tileUrlsForBounds(points, zoom, bufferTiles) {
     const pixels = points.map(([lat, lon]) => lonLatToTilePixel(lat, lon, zoom));
-    return tileKeysForRange(
+    return tileUrlsForRange(
       zoom,
       Math.floor(Math.min(...pixels.map((p) => p.x)) / MAP_TILE_SIZE) - bufferTiles,
       Math.floor(Math.max(...pixels.map((p) => p.x)) / MAP_TILE_SIZE) + bufferTiles,
@@ -3668,49 +3643,19 @@
     );
   }
 
-  // The set of every tile actually vendored as a static file under
-  // assets/map-tiles/ -- computed from the exact same zoom/viewport math
-  // used to build the vendored set in the first place, so this can never
-  // drift out of sync with MAP_PREFETCH_OVERVIEW_ZOOMS/
-  // MAP_PREFETCH_CITY_VIEWPORT_ZOOMS above. Computed once at module load
-  // (like TRIP_MAP_POINTS) since the underlying trip data never changes
-  // at runtime.
-  function buildVendoredTileKeys() {
+  function buildMapPrefetchUrls() {
     const points = uniqueLodgingPoints();
-    const keys = new Set();
-    if (!points.length) return keys;
+    if (!points.length) return [];
+    const urls = new Set();
     MAP_PREFETCH_CITY_VIEWPORT_ZOOMS.forEach((zoom) => {
       points.forEach(([lat, lon]) => {
-        tileKeysForViewport(lat, lon, zoom, MAP_PREFETCH_CITY_VIEWPORT, 1).forEach((k) => keys.add(k));
+        tileUrlsForViewport(lat, lon, zoom, MAP_PREFETCH_CITY_VIEWPORT, 1).forEach((u) => urls.add(u));
       });
     });
     MAP_PREFETCH_OVERVIEW_ZOOMS.forEach((zoom) => {
-      tileKeysForBounds(points, zoom, 1).forEach((k) => keys.add(k));
+      tileUrlsForBounds(points, zoom, 1).forEach((u) => urls.add(u));
     });
-    return keys;
-  }
-  const VENDORED_TILE_KEYS = buildVendoredTileKeys();
-
-  // The single place a tile's request URL gets decided -- every other
-  // function that needs one (buildMapPrefetchUrls() below,
-  // drawStaticMap(), OfflineTileLayer.createTile()) calls this rather
-  // than constructing a tile.openstreetmap.org URL directly.
-  function tileUrl(z, x, y) {
-    return VENDORED_TILE_KEYS.has(`${z}/${x}/${y}`)
-      ? `assets/map-tiles/${z}/${x}/${y}.png`
-      : `https://tile.openstreetmap.org/${z}/${x}/${y}.png`;
-  }
-
-  // Every key in VENDORED_TILE_KEYS is, by construction, local --
-  // buildMapPrefetchUrls() (the Checklist "Download" button's url list)
-  // is therefore entirely same-origin now, with none of the cross-origin
-  // opaque-response/rate-limit handling downloadToIdb() still supports
-  // for a future live-tile use (or once zoom 16-17 get vendored too).
-  function buildMapPrefetchUrls() {
-    return Array.from(VENDORED_TILE_KEYS).map((key) => {
-      const [z, x, y] = key.split("/");
-      return tileUrl(z, x, y);
-    });
+    return Array.from(urls);
   }
 
   // ---------------- Shared download core (map tiles + ticket files, IndexedDB) ----------------
@@ -3742,20 +3687,16 @@
   // request settles; onDone(succeeded, total) fires once every request
   // has (whether that one succeeded, failed, or hit the timeout).
   //
-  // opts.crossOrigin requests the response in "no-cors" mode, required
-  // for a cross-origin request (e.g. a live tile.openstreetmap.org URL --
-  // not currently exercised by anything in this app, since map tiles are
-  // now vendored same-origin static files, see tileUrl()'s doc comment;
-  // kept for any future live cross-origin download need, e.g. eventually
-  // vendoring the remaining zoom 16-17 tiles the same way) that doesn't
-  // send CORS headers -- fetch() in its default "cors" mode would
-  // otherwise reject outright rather than resolving. The resulting
+  // opts.crossOrigin (map tiles only) requests the response in "no-cors"
+  // mode, required for a cross-origin request (tile.openstreetmap.org)
+  // that doesn't send CORS headers -- fetch() in its default "cors" mode
+  // would otherwise reject outright rather than resolving. The resulting
   // "opaque" response can't have its status/headers read by the page even
   // on success, but its body can still be read via .blob() and stored --
   // that's the entire point of caching an opaque response at all. Since
   // Content-Length isn't readable either, cross-origin entries are only
   // verified by a non-zero blob size, not a size-vs-expected-length
-  // comparison the way same-origin requests are.
+  // comparison the way same-origin ticket files are.
   function downloadToIdb(urls, concurrency, opts, onProgress, onDone) {
     if (!urls.length) { onDone(0, 0); return; }
     // Defensive/uniform check (silent prefetches already checked this
@@ -3783,23 +3724,22 @@
       crossOrigin ? { mode: "no-cors" } : null
     );
     const total = urls.length;
-    // A minimum delay for cross-origin requests specifically -- not
-    // currently exercised by anything in this app (map tiles are now
-    // vendored same-origin static files, see tileUrl()'s doc comment),
-    // but kept for any future live cross-origin download need. A third-
-    // party tile server's usage policy asking for no more than ~2
-    // requests/second is exactly the kind of thing this guards against:
-    // with no delay, one request settling and immediately starting the
-    // next can still fire well over 2/second on a fast connection, and a
+    // tile.openstreetmap.org's usage policy asks for no more than ~2
+    // requests/second and explicitly discourages bulk downloading --
+    // reducing concurrency to 1 (see the Checklist row/prefetchMapTiles()
+    // call sites) wasn't itself enough to respect that, since with no
+    // delay between requests, one settling and immediately starting the
+    // next can still fire well over 2/second on a fast connection. A
     // rate-limited/blocked response can still *resolve* (rather than
     // reject) as a non-empty opaque response -- passing the non-zero-
-    // blob-size check below even though it's a block page, not real
-    // content -- which is a plausible explanation for a run that visually
+    // blob-size check below even though it's a block page, not a real
+    // tile -- which is a plausible explanation for a run that visually
     // reaches 100% (every attempt still "settles") while almost nothing
-    // real ends up persisted, identically on any browser, since that
-    // would be a server policy response rather than a storage bug at all.
-    // Same-origin requests have no third-party rate limit to respect, so
-    // there's no delay for those.
+    // real ends up persisted, identically on any browser, since this
+    // would be a server policy response rather than a storage bug at
+    // all. This delay only applies to cross-origin (tile) requests --
+    // same-origin ticket requests have no third-party rate limit to
+    // respect.
     const minDelayMs = crossOrigin ? 600 : 0;
 
     // A per-tile idbKeyval.get() re-read immediately after idbKeyval.set()
@@ -3980,16 +3920,21 @@
     });
   }
 
-  // Best-effort, low-priority background fetch of every vendored tile
-  // (see tileUrl()'s doc comment for why tiles are vendored as static
-  // files rather than downloaded live from tile.openstreetmap.org) --
-  // same-origin, so no crossOrigin option or rate-limit throttle needed.
-  // The prefetch is only marked "done" in localStorage once the final
-  // real-state check (not just in-loop optimism -- see downloadToIdb()'s
-  // finalizeWithRealCheck() doc comment) confirms every tile actually
-  // landed -- so an interrupted first run (e.g. the tab closed early)
-  // retries in full next time instead of silently staying incomplete
-  // forever.
+  // Best-effort, low-priority background fetch: tile requests run fully
+  // sequentially, concurrency 1 (not higher) for two independent reasons
+  // -- politer to the tile server than firing many at once (tile.
+  // openstreetmap.org's usage policy actively rate-limits/blocks bulk-
+  // looking request patterns; a rate-limited response still resolves
+  // rather than rejecting, though downloadToIdb()'s non-zero-blob-size
+  // check now catches an empty one), and, more importantly, several
+  // concurrent IndexedDB writes in flight at once has not proven as
+  // reliable in practice at this scale (~2,400 tiles) as it has for
+  // ticket downloads' much lighter load -- see downloadToIdb()'s
+  // finalizeWithRealCheck() doc comment. The prefetch is only marked
+  // "done" in localStorage once the final real-state check (not just
+  // in-loop optimism) confirms every tile actually landed -- so an
+  // interrupted first run (e.g. the tab closed early) retries in full
+  // next time instead of silently staying incomplete forever.
   function prefetchMapTiles() {
     if (navigator.onLine === false) return;
     try {
@@ -4000,7 +3945,7 @@
     // into a Checklist "Download" tap already in flight for map tiles,
     // instead of racing it -- see startDedupedDownload's doc comment.
     startDedupedDownload(MAP_PREFETCH_KEY, urls.length, (onProgress, onDone) => {
-      downloadToIdb(urls, 3, null, onProgress, onDone);
+      downloadToIdb(urls, 1, { crossOrigin: true }, onProgress, onDone);
     }, null, () => {
       try { localStorage.setItem(MAP_PREFETCH_KEY, MAP_PREFETCH_VERSION); } catch (e) {}
     });
