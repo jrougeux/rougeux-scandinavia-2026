@@ -592,6 +592,41 @@ still dependency-free vanilla JS.
   the tile server from this saga's many earlier bulk-download attempts
   that throttling correctly going forward doesn't immediately clear
   whatever cooldown/block period, if any, is already in effect.
+- That reputation concern turned out to be exactly right, and worse than
+  expected: an attempt to sidestep all of this by vendoring ~1,900 tiles
+  as static files checked into the repo (fetched once, respectfully,
+  from outside the app) was tried and **reverted** -- do not repeat this
+  without first confirming tile.openstreetmap.org access is genuinely
+  unblocked from wherever the download runs. Every single one of the
+  ~1,900 downloaded files turned out to be byte-for-byte identical (same
+  MD5 across a random sample and confirmed across the full set) --
+  `tile.openstreetmap.org` was returning its "Access Blocked" warning
+  image (see `osm.wiki/Blocked`) for literally every request in that
+  run, not real map data. This was invisible to every check available at
+  download time: the response was a real, valid, non-empty 256×256 PNG
+  with a normal `200 OK` -- indistinguishable by content-type, size, or
+  status from an actual tile, so nothing short of visually inspecting
+  the image (or comparing hashes across supposedly-different tiles, the
+  method that actually caught it) could have caught it programmatically.
+  One manual single-tile test *before* starting the bulk run succeeded
+  (real tile content) -- the block evidently activated within the first
+  few requests of the run itself, meaning throttling to ~1 request/
+  600ms did not prevent it. Both vendoring commits were reverted with
+  `git revert` (not a history rewrite) once the user reported the map
+  showing OSM's actual blocked-warning image instead of real tiles;
+  `app.js`/`sw.js` are back to the pre-vendoring, throttled-live-download
+  state, and `CACHE_NAME` was bumped forward (not reset backward) to
+  make sure the reverted `sw.js` is still detected as a real update.
+  **Before ever attempting a re-vendor**: verify tile access is actually
+  unblocked first (e.g. a single manual `curl` request, *and* actually
+  open the resulting image to confirm it looks like a map, not a warning
+  graphic -- a `200 OK` alone proved nothing here), consider whether
+  enough time has passed for any block/cooldown to lift, and strongly
+  consider a tile source *other* than `tile.openstreetmap.org` for any
+  future bulk fetch (a provider whose terms explicitly support offline/
+  cached bulk use, e.g. via a free-tier API key) rather than repeating
+  the same request pattern against the same server that's already shown
+  it will silently substitute fake content rather than reject outright.
 
 ## Data shape
 
