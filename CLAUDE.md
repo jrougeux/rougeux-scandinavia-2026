@@ -709,6 +709,32 @@ still dependency-free vanilla JS.
   doubling the total to ~4,800, comfortably inside Stadia's 100MB/device
   allowance even accounting for `osm_bright`'s larger average tile size).
   `MAP_PREFETCH_VERSION` bumped to `"v6"`.
+- The "1.6MB used" figure reported above doesn't hold up under scrutiny
+  on its own -- ticket files alone are documented at ~9MB total, so even
+  if map tiles contributed nothing, real usage should be at least 9MB,
+  not 1.6MB. Given this entire saga has repeatedly been about "looks
+  successful but isn't really there," that gap was worth taking
+  seriously rather than waving off as "the browser's estimate is a bit
+  off." `navigator.storage.estimate()`'s reported usage is a browser-
+  computed estimate, not verified ground truth -- disk accounting,
+  compression, and rounding can all cause it to diverge from real bytes
+  stored, and apparently can diverge by a lot in practice. The Checklist
+  tab's storage row now shows a **second, independent number** alongside
+  it: `computeRealIdbUsage()` calls `idbKeyval.entries()` and sums the
+  real `.size` of every `Blob` actually sitting in IndexedDB directly --
+  a completely different code path from whatever produces the browser's
+  own estimate, so it can't share whatever's causing that one to be
+  wrong. Verified with a scripted test simulating exactly this
+  discrepancy (a mocked browser estimate of 1.6MB against 9MB of
+  actually-stored blob data) -- the row correctly displays both numbers
+  together (`"Browser reports 1.6 MB... — 9.0 MB actually stored across N
+  files"`), making a real gap between them a visible, actionable signal
+  in the app itself rather than something only discoverable via Safari's
+  Web Inspector. This doesn't yet explain *why* a gap exists if one
+  really does (that needs the user to actually look at the new row's
+  output) -- only makes it possible to tell the difference between "the
+  browser's estimate is just imprecise" (both numbers roughly agree) and
+  "something is actually missing" (they don't) without guessing.
 
 ## Data shape
 

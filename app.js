@@ -3290,13 +3290,36 @@
     return row;
   }
 
-  // navigator.storage.estimate() reports real, current disk usage/quota
-  // for this origin -- surfaced directly in the Offline Data card so a
-  // storage-quota problem (Cache Storage silently refusing new writes, or
-  // even getting evicted wholesale, once an origin is at/near its quota)
-  // is visible without needing to plug the phone into a Mac and use
-  // Safari's Web Inspector. Support isn't universal, so this is best-
-  // effort and simply omits itself if the API (or the call) fails.
+  // navigator.storage.estimate()'s reported usage figure is *not*
+  // trustworthy ground truth on its own -- it's a browser-computed
+  // estimate (disk accounting/compression/rounding can all cause it to
+  // diverge from real bytes actually stored, and this has been observed
+  // in practice on this app reporting numbers implausibly smaller than
+  // the known size of what's actually downloaded, e.g. ticket files
+  // alone total ~9MB, well above a reported total of "1.6MB"). Directly
+  // summing the real byte size of every Blob actually sitting in
+  // IndexedDB (via idbKeyval.entries()) is a second, independent number
+  // that can't share whatever caused the browser's own estimate to be
+  // wrong -- both are shown together so a large gap between them is
+  // itself a visible, actionable signal rather than something only
+  // discoverable by plugging into a Mac and using Safari's Web Inspector.
+  function computeRealIdbUsage(callback) {
+    if (!window.idbKeyval || !idbKeyval.entries) { callback(null); return; }
+    idbKeyval.entries().then((entries) => {
+      let bytes = 0;
+      let count = 0;
+      entries.forEach(([, value]) => {
+        if (value && typeof value.size === "number") {
+          bytes += value.size;
+          count++;
+        }
+      });
+      callback({ bytes, count });
+    }).catch(() => callback(null));
+  }
+
+  // Support for navigator.storage.estimate() isn't universal, so this is
+  // best-effort and simply omits itself if neither number is available.
   function renderStorageEstimateRow() {
     // Return null (rather than building a node and trying to .remove()
     // it later) when unsupported -- an element only has a parent to
@@ -3304,17 +3327,36 @@
     // .remove() from inside this function, before that append ever
     // happens, would silently do nothing and leave a stuck "Checking
     // storage…" placeholder visible forever.
-    if (!navigator.storage || !navigator.storage.estimate) return null;
+    if ((!navigator.storage || !navigator.storage.estimate) && !window.idbKeyval) return null;
     const row = document.createElement("div");
     row.className = "offline-data-storage";
     row.textContent = "Checking storage…";
-    navigator.storage.estimate().then((est) => {
-      const usedMb = (est.usage / (1024 * 1024)).toFixed(1);
-      const quotaMb = est.quota ? (est.quota / (1024 * 1024)).toFixed(0) : null;
-      row.textContent = quotaMb
-        ? `Using ${usedMb} MB of ~${quotaMb} MB available on this device`
-        : `Using ${usedMb} MB`;
-    }).catch(() => { row.remove(); });
+
+    let estimateText = null;
+    let realText = null;
+    function render() {
+      const parts = [estimateText, realText].filter(Boolean);
+      row.textContent = parts.length ? parts.join(" — ") : "";
+      if (!parts.length) row.remove();
+    }
+
+    if (navigator.storage && navigator.storage.estimate) {
+      navigator.storage.estimate().then((est) => {
+        const usedMb = (est.usage / (1024 * 1024)).toFixed(1);
+        const quotaMb = est.quota ? (est.quota / (1024 * 1024)).toFixed(0) : null;
+        estimateText = quotaMb
+          ? `Browser reports ${usedMb} MB of ~${quotaMb} MB available`
+          : `Browser reports ${usedMb} MB used`;
+        render();
+      }).catch(() => { estimateText = null; render(); });
+    }
+    computeRealIdbUsage((real) => {
+      if (real) {
+        realText = `${(real.bytes / (1024 * 1024)).toFixed(1)} MB actually stored across ${real.count} downloaded file${real.count === 1 ? "" : "s"}`;
+      }
+      render();
+    });
+
     return row;
   }
 
